@@ -78,10 +78,53 @@ function getbit(data::AbstractInflateData)
     return b
 end
 
+# gets up to N bits or to the next byte boundary. Returns
+# the value of the bits as a UInt32 plus the number of bits read.
+function get_up_to_n_bits_to_byte_boundary(data::AbstractInflateData, n::Int)
+    i = 0
+    b = 0
+    bitstoread = min((8-data.bitpos) % 8, n)
+    while i < bitstoread
+        bit = data.current_byte & 1
+        data.current_byte >>= 1
+        b |= bit << i
+        # println("read $bit")
+        i += 1
+    end
+    data.bitpos += bitstoread
+    data.bitpos %= 8
+    return b, i
+end
+
 function getbits(data::AbstractInflateData, n::Int)
     b = 0
-    for i = 0:(n-1)
-        b |= getbit(data) << i
+    bitpos = 0
+    if n < 8
+        @inbounds for i = 0 : (n-1)
+            b |= getbit(data) << i
+        end
+        return b
+    end
+
+    # step 1: read to the byte boundary
+    bs, i = get_up_to_n_bits_to_byte_boundary(data, n)
+    b = bs
+    n -= i
+    bitpos += i
+
+    # step 2: read bytes until n < 8    
+    while n >= 8
+        bs = Int(get_input_byte(data))
+        b |= bs << bitpos
+        n -= 8
+        bitpos += 8
+    end
+
+    # step 3: read remaining bits
+    @inbounds for i = 0 : n - 1
+        bit = getbit(data)
+        b |= bit << bitpos
+        bitpos += 1
     end
     return b
 end
@@ -100,53 +143,45 @@ end
 function get_value_from_code(data::AbstractInflateData,
                              code::Vector{Vector{Int}})
     v = 0
-    for i = 1:length(code)
+    for i = Base.OneTo(length(code))
         v = (v << 1) | getbit(data)
-        if v < length(code[i])
-            return code[i][1 + v]
-        end
+        v < length(code[i]) && return code[i][1 + v]
         v -= length(code[i])
     end
     error("incomplete code table")
 end
 
-function get_literal_or_length(data::AbstractInflateData)
-    return get_value_from_code(data, data.literal_or_length_code)
-end
+get_literal_or_length(data::AbstractInflateData) =
+    get_value_from_code(data, data.literal_or_length_code)
+
 
 const base_length = [11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227]
 const extra_length_bits = [1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5]
 
 function getlength(data::AbstractInflateData, v::Int)
-    if v <= 264
-        return v - 254
-    elseif v <= 284
-        return base_length[v - 264] + getbits(data, extra_length_bits[v - 264])
-    else
-        return 258
-    end
+    v <= 264 && return v - 254
+    v <= 284 && return base_length[v - 264] + getbits(data, extra_length_bits[v - 264])
+    return 258
 end
 
 function getdist(data::AbstractInflateData)
     b = get_value_from_code(data, data.distance_code)
-    if b <= 3
-        return b + 1
-    else
-        extra_bits = fld(b - 2, 2)
-        return 1 + ((2 + b % 2) << extra_bits) + getbits(data, extra_bits)
-    end
+    b <= 3 && return b + 1
+
+    extra_bits = fld(b - 2, 2)
+    return 1 + ((2 + b % 2) << extra_bits) + getbits(data, extra_bits)
 end
 
 function transform_code_lengths_to_code(code_lengths::Vector{Int})
     code = Vector{Int}[]
-    for i = 1:length(code_lengths)
+    @inbounds for i = Base.OneTo(length(code_lengths))
         n = code_lengths[i]
-        if n > 0
-            while n > length(code)
-                push!(code, Int[])
-            end
-            push!(code[n], i - 1)
+        n <= 0 && continue
+
+        while n > length(code)
+            push!(code, Int[])
         end
+        push!(code[n], i - 1)
     end
     return code
 end
@@ -158,7 +193,7 @@ function read_code_tables(data::AbstractInflateData)
     hdist = getbits(data, 5) + 1
     hclen = getbits(data, 4) + 4
     code_length_code_lengths = zeros(Int, 19)
-    for i = 1:hclen
+    @inbounds for i = Base.OneTo(hclen)
         code_length_code_lengths[1 + order[i]] = getbits(data, 3)
     end
     code_length_code = transform_code_lengths_to_code(code_length_code_lengths)
@@ -200,7 +235,7 @@ function _inflate(data::InflateData)
             if len ⊻ nlen != 0xffff
                 error("corrupted data")
             end
-            for i = 1:len
+            for i = Base.OneTo(len)
                 push!(out, get_aligned_byte(data))
             end
             continue
@@ -222,7 +257,7 @@ function _inflate(data::InflateData)
             else
                 length = getlength(data, v)
                 distance = getdist(data)
-                for i = 1:length
+                for i = Base.OneTo(length)
                     push!(out, out[end - distance + 1])
                 end
             end
@@ -256,7 +291,7 @@ end
 
 function compute_adler_checksum(x::Vector{UInt8})
     adler = init_adler()
-    for b in x
+    @inbounds for b in x
         adler = update_adler(adler, b)
     end
     return finish_adler(adler)
@@ -265,9 +300,9 @@ end
 const crc_table = zeros(UInt32, 256)
 
 function make_crc_table()
-    for n = 1:256
+    @inbounds for n = Base.OneTo(256)
         c = UInt32(n - 1)
-        for k = 1:8
+        @inbounds for k = Base.OneTo(8)
             if (c & 0x00000001) != 0
                 c = 0xedb88320 ⊻ (c >> 1)
             else
@@ -279,23 +314,20 @@ function make_crc_table()
 end
 
 function init_crc()
-    if crc_table[1] == 0
-        make_crc_table()
-    end
+    crc_table[1] == 0 && make_crc_table()
     return 0xffffffff
 end
 
-function update_crc(c::UInt32, x::UInt8)
-    return crc_table[1 + ((c ⊻ x) & 0xff)] ⊻ (c >> 8)
-end
+update_crc(c::UInt32, x::UInt8) =
+    crc_table[1 + ((c ⊻ x) & 0xff)] ⊻ (c >> 8)
 
-function finish_crc(c)
-    return c ⊻ 0xffffffff
-end
+
+finish_crc(c) = c ⊻ 0xffffffff
+
 
 function crc(x::Vector{UInt8})
     c = init_crc()
-    for b in x
+    @inbounds for b in x
         c = update_crc(c, b)
     end
     return finish_crc(c)
@@ -306,9 +338,7 @@ function read_zero_terminated_data(data::AbstractInflateData)
     while true
         c = get_aligned_byte(data)
         push!(s, c)
-        if c == 0
-            break
-        end
+        c == 0 && break
     end
     return s
 end
@@ -320,30 +350,20 @@ function read_decompress_header(data::AbstractInflateData)
     CINFO = CM >> 4
     FLEVEL = FLG >> 6
     FDICT = (FLG >> 5) & 0x01
-    if CM != 8
-        error("unsupported compression method")
-    end
-    if CINFO > 7
-        error("invalid LZ77 window size")
-    end
-    if FDICT != 0
-        error("preset dictionary not supported")
-    end
-    if mod((UInt(CMF) << 8) | FLG, 31) != 0
-        error("header checksum error")
-    end
+    CM != 8 && error("unsupported compression method")
+    CINFO > 7 && error("invalid LZ77 window size")
+    FDICT != 0 && error("preset dictionary not supported")
+    mod((UInt(CMF) << 8) | FLG, 31) != 0 && error("header checksum error")
 end
 
 function read_gzip_header(data::AbstractInflateData, headers)
     ID1 = get_aligned_byte(data)
     ID2 = get_aligned_byte(data)
-    if ID1 != 0x1f || ID2 != 0x8b
-        error("not gzipped data")
-    end
+    (ID1 != 0x1f || ID2 != 0x8b) && error("not gzipped data")
+    
     CM = get_aligned_byte(data)
-    if CM != 8
-        error("unsupported compression method")
-    end
+    CM != 8 && error("unsupported compression method")
+    
     FLG = get_aligned_byte(data)
     MTIME = getbits(data, 32)
     XFL = get_aligned_byte(data)
@@ -360,7 +380,7 @@ function read_gzip_header(data::AbstractInflateData, headers)
             headers["fextra"] = zeros(UInt8, xlen)
         end
 
-        for i = 1:xlen
+        @inbounds for i = 1:xlen
             b = get_aligned_byte(data)
             if headers != nothing
                 headers["fextra"][i] = b
@@ -385,9 +405,7 @@ function read_gzip_header(data::AbstractInflateData, headers)
     if (FLG & 0x02) != 0   # FLG.FHCRC
         header_crc = finish_crc(data.crc)
         crc16 = getbits(data, 16)
-        if crc16 != (header_crc & 0xffff)
-            error("corrupted data, header crc check failed")
-        end
+        crc16 != (header_crc & 0xffff) && error("corrupted data, header crc check failed")
     end
 end
 
@@ -400,7 +418,7 @@ see `InflateStream`.
 
 Reference: [RFC 1951](https://www.ietf.org/rfc/rfc1951.txt)
 """
-inflate(source::Vector{UInt8}) = return _inflate(InflateData(source))
+inflate(source::Vector{UInt8}) = _inflate(InflateData(source))
 
 """
     decompress(source::Vector{UInt8})
@@ -419,13 +437,10 @@ function decompress(source::Vector{UInt8})
 
     skip_bits_to_byte_boundary(data)
     ADLER = 0
-    for i = [24, 16, 8, 0]
+    @inbounds for i = [24, 16, 8, 0]
         ADLER |= Int(get_aligned_byte(data)) << i
     end
-    if compute_adler_checksum(out) != ADLER
-        error("corrupted data")
-    end
-
+    compute_adler_checksum(out) != ADLER && error("corrupted data")
     return out
 end
 
@@ -450,14 +465,11 @@ function gunzip(source::Vector{UInt8}; headers = nothing)
 
     skip_bits_to_byte_boundary(data)
     crc32 = getbits(data, 32)
-    if crc32 != crc(out)
-        error("corrupted data, crc check failed")
-    end
-    isize = getbits(data, 32)
-    if isize != length(out)
-        error("corrupted data, length check failed")
-    end
+    crc32 != crc(out) && error("corrupted data, crc check failed")
 
+    isize = getbits(data, 32)
+    isize != length(out) && error("corrupted data, length check failed")
+    
     return out
 end
 
@@ -467,9 +479,7 @@ end
 Convenience wrapper for reading a gzip compressed text file. The
 result is returned as a string.
 """
-function gunzip(filename::AbstractString; kwargs...)
-    return String(gunzip(read(filename); kwargs...))
-end
+gunzip(filename::AbstractString; kwargs...) = String(gunzip(read(filename); kwargs...))
 
 
 ### Streaming interface. ###
@@ -494,12 +504,11 @@ mutable struct StreamingInflateData <: AbstractInflateData
     crc::UInt32
 end
 
-function StreamingInflateData(stream::IO)
-    return StreamingInflateData(stream, 0, 0, fixed_literal_or_length_table,
-                                fixed_distance_table,
-                                zeros(UInt8, buffer_size), 1, 1,
-                                true, 0, -2, false, init_crc())
-end
+StreamingInflateData(stream::IO) = 
+    StreamingInflateData(stream, 0, 0, fixed_literal_or_length_table,
+                            fixed_distance_table,
+                            zeros(UInt8, buffer_size), 1, 1,
+                            true, 0, -2, false, init_crc())
 
 function get_input_byte(data::StreamingInflateData)
     byte = read(data.stream, UInt8)
@@ -578,25 +587,20 @@ function read_decompress_trailer(stream::DecompressStream)
     computed_adler = finish_adler(stream.adler)
     skip_bits_to_byte_boundary(stream.data)
     stored_adler = 0
-    for i = [24, 16, 8, 0]
+    @inbounds for i = [24, 16, 8, 0]
         stored_adler |= Int(get_aligned_byte(stream.data)) << i
     end
-    if computed_adler != stored_adler
-        error("corrupted data")
-    end
+    computed_adler != stored_adler && error("corrupted data")
 end
 
 function read_gzip_trailer(stream::GunzipStream)
     crc = finish_crc(stream.crc)
     skip_bits_to_byte_boundary(stream.data)
     crc32 = getbits(stream.data, 32)
-    if crc32 != crc
-        error("corrupted data, crc check failed")
-    end
+    crc32 != crc && error("corrupted data, crc check failed")
+
     isize = getbits(stream.data, 32)
-    if isize != stream.num_bytes
-        error("corrupted data, length check failed")
-    end
+    isize != stream.num_bytes && error("corrupted data, length check failed")
 end
 
 function read_output_byte(data::StreamingInflateData)
@@ -622,9 +626,8 @@ function write_to_buffer(data::StreamingInflateData, x::UInt8)
     end
 end
 
-function write_to_buffer(stream::InflateStream, x::UInt8)
-    write_to_buffer(stream.data, x)
-end
+write_to_buffer(stream::InflateStream, x::UInt8) = write_to_buffer(stream.data, x)
+
 
 function write_to_buffer(stream::DecompressStream, x::UInt8)
     write_to_buffer(stream.data, x)
@@ -653,9 +656,8 @@ function getbyte(stream::AbstractInflateStream)
     end
 
     if stream.data.waiting_for_new_block
-        if stream.data.reading_final_block
-            return
-        end
+        stream.data.reading_final_block && return
+
         stream.data.reading_final_block = getbits(stream.data, 1) == 1
         compression_mode = getbits(stream.data, 2)
         if compression_mode == 0
@@ -693,45 +695,28 @@ function getbyte(stream::AbstractInflateStream)
     end
 end
 
-function Base.eof(stream::AbstractInflateStream)
-    return stream.data.read_pos == stream.data.write_pos
-end
+Base.eof(stream::AbstractInflateStream) = stream.data.read_pos == stream.data.write_pos
 
 function Base.read(stream::InflateStream, ::Type{UInt8})
-    if eof(stream)
-        throw(EOFError())
-    end
-
-    byte = read_output_byte(stream)
-
-    return byte
+    eof(stream) && throw(EOFError())
+    return read_output_byte(stream)
 end
 
 function Base.read(stream::DecompressStream, ::Type{UInt8})
-    if eof(stream)
-        throw(EOFError())
-    end
-
+    eof(stream) && throw(EOFError())
+    
     byte = read_output_byte(stream)
 
-    if eof(stream)
-        read_decompress_trailer(stream)
-    end
-
+    eof(stream) && read_decompress_trailer(stream)
     return byte
 end
 
 function Base.read(stream::GunzipStream, ::Type{UInt8})
-    if eof(stream)
-        throw(EOFError())
-    end
-
+    eof(stream) && throw(EOFError())
+    
     byte = read_output_byte(stream)
-
-    if eof(stream)
-        read_gzip_trailer(stream)
-    end
-
+    
+    eof(stream) && read_gzip_trailer(stream)
     return byte
 end
 
