@@ -49,18 +49,21 @@ mutable struct InflateData <: AbstractInflateData
     bitpos::Int
     literal_or_length_code::Vector{Vector{Int}}
     distance_code::Vector{Vector{Int}}
+    update_input_crc::Bool
     crc::UInt32
 end
 
 function InflateData(source::Vector{UInt8})
     InflateData(source, 0, 1, 0, fixed_literal_or_length_table,
-                fixed_distance_table, init_crc())
+                fixed_distance_table, false, init_crc())
 end
 
 function get_input_byte(data::InflateData)
     byte = data.bytes[data.bytepos]
     data.bytepos += 1
-    data.crc = update_crc(data.crc, byte)
+    if data.update_input_crc
+        data.crc = update_crc(data.crc, byte)
+    end
     return byte
 end
 
@@ -335,6 +338,7 @@ function read_decompress_header(data::AbstractInflateData)
 end
 
 function read_gzip_header(data::AbstractInflateData, headers)
+    data.update_input_crc = true
     ID1 = get_aligned_byte(data)
     ID2 = get_aligned_byte(data)
     if ID1 != 0x1f || ID2 != 0x8b
@@ -382,6 +386,7 @@ function read_gzip_header(data::AbstractInflateData, headers)
         end
     end
 
+    data.update_input_crc = false
     if (FLG & 0x02) != 0   # FLG.FHCRC
         header_crc = finish_crc(data.crc)
         crc16 = getbits(data, 16)
@@ -491,6 +496,7 @@ mutable struct StreamingInflateData <: AbstractInflateData
     pending_bytes::Int
     distance::Int
     reading_final_block::Bool
+    update_input_crc::Bool
     crc::UInt32
 end
 
@@ -498,12 +504,14 @@ function StreamingInflateData(stream::IO)
     return StreamingInflateData(stream, 0, 0, fixed_literal_or_length_table,
                                 fixed_distance_table,
                                 zeros(UInt8, buffer_size), 1, 1,
-                                true, 0, -2, false, init_crc())
+                                true, 0, -2, false, false, init_crc())
 end
 
 function get_input_byte(data::StreamingInflateData)
     byte = read(data.stream, UInt8)
-    data.crc = update_crc(data.crc, byte)
+    if data.update_input_crc
+        data.crc = update_crc(data.crc, byte)
+    end
     return byte
 end
 
