@@ -24,9 +24,9 @@ end
 
 function GzHeader(mtime, os, extra, name, comment, include_header_crc)
     return GzHeader(true, mtime, 0, os,
-                    pointer(extra), length(extra), 0,
-                    pointer(name), 0,
-                    pointer(comment), 0,
+                    isempty(extra) ? 0 : pointer(extra), length(extra), 0,
+                    isempty(name) ? 0 : pointer(name), 0,
+                    isempty(comment) ? 0 : pointer(comment), 0,
                     include_header_crc, 0)
 end
 

@@ -178,10 +178,10 @@ function read_code_tables(data::AbstractInflateData)
             l = code_lengths[i-1]
         elseif c == 17
             n = 3 + getbits(data, 3)
-        elseif c == 18
-            n = 11 + getbits(data, 7)
         else
-            error("invalid code length code")
+            # A code of length 19 can only yield values between 0 and
+            # 18 so we can only get here if c == 18.
+            n = 11 + getbits(data, 7)
         end
         code_lengths[i:(i+n-1)] .= l
         i += n
@@ -316,11 +316,11 @@ function read_zero_terminated_data(data::AbstractInflateData)
     return s
 end
 
-function read_decompress_header(data::AbstractInflateData)
+function read_zlib_header(data::AbstractInflateData)
     CMF = get_aligned_byte(data)
     FLG = get_aligned_byte(data)
     CM = CMF & 0x0f
-    CINFO = CM >> 4
+    CINFO = CMF >> 4
     FLEVEL = FLG >> 6
     FDICT = (FLG >> 5) & 0x01
     if CM != 8
@@ -386,6 +386,10 @@ function read_gzip_header(data::AbstractInflateData, headers)
         end
     end
 
+    if (FLG & 0xe0) != 0
+        error("reserved FLG bit set")
+    end
+
     data.update_input_crc = false
     if (FLG & 0x02) != 0   # FLG.FHCRC
         header_crc = finish_crc(data.crc)
@@ -418,17 +422,17 @@ Reference: [RFC 1950](https://www.ietf.org/rfc/rfc1950.txt)
 """
 function decompress(source::Vector{UInt8})
     data = InflateData(source)
-    read_decompress_header(data)
+    read_zlib_header(data)
 
     out = _inflate(data)
 
     skip_bits_to_byte_boundary(data)
-    ADLER = 0
+    stored_adler = 0
     for i = [24, 16, 8, 0]
-        ADLER |= Int(get_aligned_byte(data)) << i
+        stored_adler |= Int(get_aligned_byte(data)) << i
     end
-    if compute_adler_checksum(out) != ADLER
-        error("corrupted data")
+    if compute_adler_checksum(out) != stored_adler
+        error("corrupted data, adler checksum error")
     end
 
     return out
@@ -550,8 +554,11 @@ end
 
 function DecompressStream(stream::IO)
     stream = DecompressStream(StreamingInflateData(stream), init_adler())
-    read_decompress_header(stream.data)
+    read_zlib_header(stream.data)
     getbyte(stream)
+    if eof(stream)
+        read_zlib_trailer(stream)
+    end
     return stream
 end
 
@@ -579,10 +586,13 @@ function GunzipStream(stream::IO; headers = nothing)
     stream = GunzipStream(StreamingInflateData(stream), init_crc(), 0)
     read_gzip_header(stream.data, headers)
     getbyte(stream)
+    if eof(stream)
+        read_gzip_trailer(stream)
+    end
     return stream
 end
 
-function read_decompress_trailer(stream::DecompressStream)
+function read_zlib_trailer(stream::DecompressStream)
     computed_adler = finish_adler(stream.adler)
     skip_bits_to_byte_boundary(stream.data)
     stored_adler = 0
@@ -590,7 +600,7 @@ function read_decompress_trailer(stream::DecompressStream)
         stored_adler |= Int(get_aligned_byte(stream.data)) << i
     end
     if computed_adler != stored_adler
-        error("corrupted data")
+        error("corrupted data, adler checksum error")
     end
 end
 
@@ -723,7 +733,7 @@ function Base.read(stream::DecompressStream, ::Type{UInt8})
     byte = read_output_byte(stream)
 
     if eof(stream)
-        read_decompress_trailer(stream)
+        read_zlib_trailer(stream)
     end
 
     return byte
