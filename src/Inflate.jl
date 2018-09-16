@@ -400,7 +400,7 @@ see `InflateStream`.
 
 Reference: [RFC 1951](https://www.ietf.org/rfc/rfc1951.txt)
 """
-inflate(source::Vector{UInt8}) = return _inflate(InflateData(source))
+inflate(source::Vector{UInt8}) = _inflate(InflateData(source))
 
 """
     decompress(source::Vector{UInt8})
