@@ -285,8 +285,8 @@ function init_crc()
     return 0xffffffff
 end
 
-function update_crc(c::UInt32, x::UInt8)
-    return crc_table[1 + ((c ⊻ x) & 0xff)] ⊻ (c >> 8)
+@inline function update_crc(c::UInt32, x::UInt8)
+    @inbounds return crc_table[1 + ((c ⊻ x) & 0xff)] ⊻ (c >> 8)
 end
 
 function finish_crc(c)
