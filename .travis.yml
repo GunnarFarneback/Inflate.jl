@@ -1,0 +1,23 @@
+language: julia
+sudo: false
+os:
+  - linux
+  - osx
+
+julia:
+ - 0.7
+ - nightly
+
+notifications:
+  email: false
+
+# uncomment the following lines to override the default test script
+script:
+  - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
+  - julia -e 'using Pkg; Pkg.clone(pwd()); Pkg.build("Inflate"); Pkg.test("Inflate"; coverage=true)'
+
+after_success:
+    - julia -e 'using Pkg; cd(Pkg.dir("Inflate")); Pkg.add("Coverage"); using Coverage; Codecov.submit(process_folder())'
+#    - julia -e 'using Pkg; Pkg.add("Documenter")'
+#    - julia -e 'using Pkg; cd(Pkg.dir("Inflate")); include(joinpath("docs", "make.jl"))'
+#    - export JULIA_NUM_THREADS=4; julia -e 'Pkg.add("PkgBenchmark"); using PkgBenchmark; benchmarkpkg("Inflate", promptoverwrite=false)'
