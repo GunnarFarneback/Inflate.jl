@@ -37,12 +37,12 @@ mtime = 1537006040
 fextra = UInt8[0x00, 0xbe, 0xef, 0x00]
 fname = "foo.txt"
 fcomment = "example string"
-gz = gzip_with_header("foo", mtime, fextra, fname, fcomment, true)
+gz = gzip_with_header("foo", mtime, os, fextra, fname, fcomment, true)
 
 headers = Dict{String, Any}()
 @test String(gunzip(gz, headers = headers)) == "foo"
 @test headers["mtime"] == mtime
-@test headers["os"] == 255
+@test headers["os"] == os
 @test headers["fextra"] == fextra
 @test headers["fname"] == fname
 @test headers["fcomment"] == fcomment
@@ -50,7 +50,7 @@ headers = Dict{String, Any}()
 headers = Dict{String, Any}()
 @test read(GunzipStream(IOBuffer(gz), headers = headers), String) == "foo"
 @test headers["mtime"] == mtime
-@test headers["os"] == 255
+@test headers["os"] == os
 @test headers["fextra"] == fextra
 @test headers["fname"] == fname
 @test headers["fcomment"] == fcomment
