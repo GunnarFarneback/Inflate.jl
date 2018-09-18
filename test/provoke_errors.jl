@@ -11,8 +11,8 @@ empty_gzip = [0x1f, 0x8b, 0x08, 0x03, 0x00, 0x00, 0x00, 0x00,
 
 @testset "Empty messages" begin
     @test inflate(empty_deflate) == UInt8[]
-    @test decompress(empty_zlib) == UInt8[]
-    @test gunzip(empty_gzip) == UInt8[]
+    @test inflate_zlib(empty_zlib) == UInt8[]
+    @test inflate_gzip(empty_gzip) == UInt8[]
 end
 
 @testset "Deflate corruption" begin
@@ -32,8 +32,8 @@ end
     z3 = copy(empty_zlib); z3[2] = 0xbc   # preset dictionary not supported
     z4 = copy(empty_zlib); z4[2] = 0x9d   # header checksum error
     for z in [z1, z2, z3, z4]
-        @test_throws ErrorException decompress(z)
-        @test_throws ErrorException DecompressStream(IOBuffer(z))
+        @test_throws ErrorException inflate_zlib(z)
+        @test_throws ErrorException InflateZlibStream(IOBuffer(z))
     end
 end
 
@@ -43,8 +43,8 @@ end
     z7 = copy(empty_zlib); z7[7] = 0x01   # adler checksum error
     z8 = copy(empty_zlib); z8[8] = 0x02   # adler checksum error
     for z in [z5, z6, z7, z8]
-        @test_throws ErrorException decompress(z)
-        @test_throws ErrorException read(DecompressStream(IOBuffer(z)))
+        @test_throws ErrorException inflate_zlib(z)
+        @test_throws ErrorException read(InflateZlibStream(IOBuffer(z)))
     end
 end
 
@@ -56,8 +56,8 @@ end
     g5 = copy(empty_gzip); g5[11] = 0x92  # header crc error
     g6 = copy(empty_gzip); g6[12] = 0x1f  # header crc error
     for g in [g1, g2, g3, g4, g5, g6]
-        @test_throws ErrorException gunzip(g)
-        @test_throws ErrorException GunzipStream(IOBuffer(g))
+        @test_throws ErrorException inflate_gzip(g)
+        @test_throws ErrorException InflateGzipStream(IOBuffer(g))
     end
 end
 
@@ -71,15 +71,15 @@ end
     g13 = copy(empty_gzip); g13[21] = 0x01   # length check failed
     g14 = copy(empty_gzip); g14[22] = 0x01   # length check failed
     for g in [g7, g8, g9, g10, g11, g12, g13, g14]
-        @test_throws ErrorException gunzip(g)
-        @test_throws ErrorException read(GunzipStream(IOBuffer(g)))
+        @test_throws ErrorException inflate_gzip(g)
+        @test_throws ErrorException read(InflateGzipStream(IOBuffer(g)))
     end
 end
 
 @testset "Reading past end of file" begin
     s1 = InflateStream(IOBuffer(empty_deflate))
-    s2 = DecompressStream(IOBuffer(empty_zlib))
-    s3 = GunzipStream(IOBuffer(empty_gzip))
+    s2 = InflateZlibStream(IOBuffer(empty_zlib))
+    s3 = InflateGzipStream(IOBuffer(empty_gzip))
     for s in [s1, s2, s3]
         @test eof(s)
         @test_throws EOFError read(s, UInt8)

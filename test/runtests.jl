@@ -12,11 +12,11 @@ long_string = join(fill(medium_string, 1000), short_string)
 @testset "Text strings" begin
     for s in [empty_string, short_string, medium_string, long_string]
         @test String(inflate(read(DeflateCompressorStream(IOBuffer(s))))) == s
-        @test String(decompress(read(ZlibCompressorStream(IOBuffer(s))))) == s
-        @test String(gunzip(read(GzipCompressorStream(IOBuffer(s))))) == s
+        @test String(inflate_zlib(read(ZlibCompressorStream(IOBuffer(s))))) == s
+        @test String(inflate_gzip(read(GzipCompressorStream(IOBuffer(s))))) == s
         @test read(InflateStream(DeflateCompressorStream(IOBuffer(s))), String) == s
-        @test read(DecompressStream(ZlibCompressorStream(IOBuffer(s))), String) == s
-        @test read(GunzipStream(GzipCompressorStream(IOBuffer(s))), String) == s
+        @test read(InflateZlibStream(ZlibCompressorStream(IOBuffer(s))), String) == s
+        @test read(InflateGzipStream(GzipCompressorStream(IOBuffer(s))), String) == s
     end
 end
 
@@ -25,11 +25,11 @@ end
     for n in [0, 1, 10, 100, 1000, 10000, 100000, 1000000]
         data = rand(UInt8, n)
         @test inflate(read(DeflateCompressorStream(IOBuffer(data)))) == data
-        @test decompress(read(ZlibCompressorStream(IOBuffer(data)))) == data
-        @test gunzip(read(GzipCompressorStream(IOBuffer(data)))) == data
+        @test inflate_zlib(read(ZlibCompressorStream(IOBuffer(data)))) == data
+        @test inflate_gzip(read(GzipCompressorStream(IOBuffer(data)))) == data
         @test read(InflateStream(DeflateCompressorStream(IOBuffer(data)))) == data
-        @test read(DecompressStream(ZlibCompressorStream(IOBuffer(data)))) == data
-        @test read(GunzipStream(GzipCompressorStream(IOBuffer(data)))) == data
+        @test read(InflateZlibStream(ZlibCompressorStream(IOBuffer(data)))) == data
+        @test read(InflateGzipStream(GzipCompressorStream(IOBuffer(data)))) == data
     end
 end
 
@@ -44,7 +44,7 @@ gz = gzip_with_header("foo", mtime, os, fextra, fname, fcomment, true)
 
 @testset "Gzip headers" begin
     headers = Dict{String, Any}()
-    @test String(gunzip(gz, headers = headers)) == "foo"
+    @test String(inflate_gzip(gz, headers = headers)) == "foo"
     @test headers["mtime"] == mtime
     @test headers["os"] == os
     @test headers["fextra"] == fextra
@@ -52,7 +52,7 @@ gz = gzip_with_header("foo", mtime, os, fextra, fname, fcomment, true)
     @test headers["fcomment"] == fcomment
 
     headers = Dict{String, Any}()
-    @test read(GunzipStream(IOBuffer(gz), headers = headers), String) == "foo"
+    @test read(InflateGzipStream(IOBuffer(gz), headers = headers), String) == "foo"
     @test headers["mtime"] == mtime
     @test headers["os"] == os
     @test headers["fextra"] == fextra

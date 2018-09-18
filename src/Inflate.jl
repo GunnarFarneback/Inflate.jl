@@ -7,8 +7,8 @@
 # package.
 module Inflate
 
-export inflate, decompress, gunzip,
-       InflateStream, DecompressStream, GunzipStream
+export inflate, inflate_zlib, inflate_gzip,
+       InflateStream, InflateZlibStream, InflateGzipStream
 
 # Huffman codes are internally represented by Vector{Vector{Int}},
 # where code[k] are a vector of the values with code words of length
@@ -412,15 +412,15 @@ Reference: [RFC 1951](https://www.ietf.org/rfc/rfc1951.txt)
 inflate(source::Vector{UInt8}) = _inflate(InflateData(source))
 
 """
-    decompress(source::Vector{UInt8})
+    inflate_zlib(source::Vector{UInt8})
 
 Decompress in memory `source`, in Zlib compressed format. The
 output will also be a `Vector{UInt8}`. For a streaming counterpart,
-see `DecompressStream`.
+see `InflateZlibStream`.
 
 Reference: [RFC 1950](https://www.ietf.org/rfc/rfc1950.txt)
 """
-function decompress(source::Vector{UInt8})
+function inflate_zlib(source::Vector{UInt8})
     data = InflateData(source)
     read_zlib_header(data)
 
@@ -439,20 +439,20 @@ function decompress(source::Vector{UInt8})
 end
 
 """
-    gunzip(source::Vector{UInt8})
+    inflate_gzip(source::Vector{UInt8})
 
 Decompress in memory `source`, in Gzip compressed format. The
 output will also be a `Vector{UInt8}`. For a streaming counterpart,
-see `GunzipStream`.
+see `InflateGzipStream`.
 
     gzip_headers = Dict{String, Any}()
-    gunzip(source::Vector{UInt8}; headers = gzip_headers)
+    inflate_gzip(source::Vector{UInt8}; headers = gzip_headers)
 
 Also retrieve gzip headers in the provided `Dict`.
 
 Reference: [RFC 1952](https://www.ietf.org/rfc/rfc1952.txt)
 """
-function gunzip(source::Vector{UInt8}; headers = nothing)
+function inflate_gzip(source::Vector{UInt8}; headers = nothing)
     data = InflateData(source)
     read_gzip_header(data, headers)
     out = _inflate(data)
@@ -471,13 +471,13 @@ function gunzip(source::Vector{UInt8}; headers = nothing)
 end
 
 """
-    gunzip(filename::AbstractString)
+    inflate_gzip(filename::AbstractString)
 
 Convenience wrapper for reading a gzip compressed text file. The
 result is returned as a string.
 """
-function gunzip(filename::AbstractString; kwargs...)
-    return String(gunzip(read(filename); kwargs...))
+function inflate_gzip(filename::AbstractString; kwargs...)
+    return String(inflate_gzip(read(filename); kwargs...))
 end
 
 
@@ -540,20 +540,20 @@ function InflateStream(stream::IO)
 end
 
 """
-    DecompressStream(stream::IO)
+    InflateZlibStream(stream::IO)
 
 Streaming decompression of Zlib compressed `stream`. For an in memory
-counterpart, see `decompress`.
+counterpart, see `inflate_zlib`.
 
 Reference: [RFC 1950](https://www.ietf.org/rfc/rfc1950.txt)
 """
-mutable struct DecompressStream <: AbstractInflateStream
+mutable struct InflateZlibStream <: AbstractInflateStream
     data::StreamingInflateData
     adler::UInt32
 end
 
-function DecompressStream(stream::IO)
-    stream = DecompressStream(StreamingInflateData(stream), init_adler())
+function InflateZlibStream(stream::IO)
+    stream = InflateZlibStream(StreamingInflateData(stream), init_adler())
     read_zlib_header(stream.data)
     getbyte(stream)
     if eof(stream)
@@ -563,27 +563,27 @@ function DecompressStream(stream::IO)
 end
 
 """
-    GunzipStream(stream::IO)
+    InflateGzipStream(stream::IO)
 
 Streaming decompression of Gzip compressed `stream`. For an in memory
-counterpart, see `gunzip`.
+counterpart, see `inflate_gzip`.
 
     gzip_headers = Dict{String, Any}()
-    GunzipStream(stream::IO; headers = gzip_headers)
+    InflateGzipStream(stream::IO; headers = gzip_headers)
 
 Also retrieve gzip headers in the provided `Dict`. The headers are
 available directly after the object is constructed.
 
 Reference: [RFC 1952](https://www.ietf.org/rfc/rfc1952.txt)
 """
-mutable struct GunzipStream <: AbstractInflateStream
+mutable struct InflateGzipStream <: AbstractInflateStream
     data::StreamingInflateData
     crc::UInt32
     num_bytes::Int
 end
 
-function GunzipStream(stream::IO; headers = nothing)
-    stream = GunzipStream(StreamingInflateData(stream), init_crc(), 0)
+function InflateGzipStream(stream::IO; headers = nothing)
+    stream = InflateGzipStream(StreamingInflateData(stream), init_crc(), 0)
     read_gzip_header(stream.data, headers)
     getbyte(stream)
     if eof(stream)
@@ -592,7 +592,7 @@ function GunzipStream(stream::IO; headers = nothing)
     return stream
 end
 
-function read_zlib_trailer(stream::DecompressStream)
+function read_zlib_trailer(stream::InflateZlibStream)
     computed_adler = finish_adler(stream.adler)
     skip_bits_to_byte_boundary(stream.data)
     stored_adler = 0
@@ -604,7 +604,7 @@ function read_zlib_trailer(stream::DecompressStream)
     end
 end
 
-function read_gzip_trailer(stream::GunzipStream)
+function read_gzip_trailer(stream::InflateGzipStream)
     crc = finish_crc(stream.crc)
     skip_bits_to_byte_boundary(stream.data)
     crc32 = getbits(stream.data, 32)
@@ -644,12 +644,12 @@ function write_to_buffer(stream::InflateStream, x::UInt8)
     write_to_buffer(stream.data, x)
 end
 
-function write_to_buffer(stream::DecompressStream, x::UInt8)
+function write_to_buffer(stream::InflateZlibStream, x::UInt8)
     write_to_buffer(stream.data, x)
     stream.adler = update_adler(stream.adler, x)
 end
 
-function write_to_buffer(stream::GunzipStream, x::UInt8)
+function write_to_buffer(stream::InflateGzipStream, x::UInt8)
     write_to_buffer(stream.data, x)
     stream.crc = update_crc(stream.crc, x)
     stream.num_bytes += 1
@@ -725,7 +725,7 @@ function Base.read(stream::InflateStream, ::Type{UInt8})
     return byte
 end
 
-function Base.read(stream::DecompressStream, ::Type{UInt8})
+function Base.read(stream::InflateZlibStream, ::Type{UInt8})
     if eof(stream)
         throw(EOFError())
     end
@@ -739,7 +739,7 @@ function Base.read(stream::DecompressStream, ::Type{UInt8})
     return byte
 end
 
-function Base.read(stream::GunzipStream, ::Type{UInt8})
+function Base.read(stream::InflateGzipStream, ::Type{UInt8})
     if eof(stream)
         throw(EOFError())
     end
