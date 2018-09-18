@@ -22,7 +22,61 @@ compelling or one or more of the following applies to you:
 * Want a full-featured streaming interface.
 * Want a battle-proven library.
 
-## Documentation
+## In Memory Decompression
 
-For now, get inspiration from the docstrings and the tests in
-`test/runtests.jl`.
+In memory decompression is done by the following functions:
+
+| function | decompresses |
+| -------- | ------------ |
+| `inflate(data::Vector{UInt8})` | raw Deflate data |
+| `inflate_zlib(data::Vector{UInt8})` | Zlib data |
+| `inflate_gzip(data::Vector{UInt8})` | Gzip data |
+
+They all take a `Vector{UInt8}` with compressed data as input and
+return a `Vector{UInt8}` of decompressed data. Additionally
+```
+gzip_headers = Dict{String, Any}()
+out = inflate_gzip(data, headers = gzip_headers)
+```
+fills in `headers` with the Gzip headers present in `data`. Finally.
+there is also a convenience function to read a compressed text file in
+gzip format
+```
+out = inflate_gzip(filename::String)
+```
+This returns the decompressed file as a string.
+
+
+## Streaming Decompression
+
+Streaming decompression is done using the following types:
+
+| stream | decompresses |
+| ------ | ------------ |
+| `InflateStream(stream::IO)` | raw Deflate stream |
+| `InflateZlibStream(stream::IO)` | Zlib stream |
+| `InflateGzipStream(stream::IO)` | Gzip stream |
+
+The stream types are subtypes of `IO` and decompression is done by
+reading from instances of the types.
+
+Example:
+```
+f = open("compressed_file.gz", "r")
+gz = InflateGzipStream(f)
+for line in readlines(gz)
+    println(line)
+end
+close(f)
+```
+The streaming interface is minimalistic. If you need a full-featured
+interface, the CodecZlib package is likely to be a better fit.
+
+Reading of Gzip headers can be done from the streaming interface too.
+```
+gzip_headers = Dict{String, Any}()
+gz = InflateGzipStream(stream, headers = gzip_headers)
+```
+The retrieved headers will be available immediately upon construction
+of the `InflateGzipStream`. It is not necessary to read any data
+first.
