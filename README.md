@@ -38,7 +38,14 @@ return a `Vector{UInt8}` of decompressed data. Additionally
 gzip_headers = Dict{String, Any}()
 out = inflate_gzip(data, headers = gzip_headers)
 ```
-fills in `headers` with the Gzip headers present in `data`. Finally.
+fills in `gzip_headers` with the Gzip headers present in `data`.
+
+Both `inflate_zlib` and `inflate_gzip` accept the keyword argument
+`ignore_checksum`, which if set to true skips consistency checking by
+means of Adler and CRC checksums respectively. This disables the
+computation of the checksums, saving time.
+
+Finally,
 there is also a convenience function to read a compressed text file in
 gzip format
 ```
@@ -80,3 +87,7 @@ gz = InflateGzipStream(stream, headers = gzip_headers)
 The retrieved headers will be available immediately upon construction
 of the `InflateGzipStream`. It is not necessary to read any data
 first.
+
+Likewise both `InflateZlibStream` and `InflateGzipStream` accept the
+keyword argument `ignore_checksum` in the same way as the
+non-streaming functions `inflate_zlib` and `inflate_gzip`.

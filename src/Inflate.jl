@@ -337,8 +337,8 @@ function read_zlib_header(data::AbstractInflateData)
     end
 end
 
-function read_gzip_header(data::AbstractInflateData, headers)
-    data.update_input_crc = true
+function read_gzip_header(data::AbstractInflateData, headers, compute_crc)
+    data.update_input_crc = compute_crc
     ID1 = get_aligned_byte(data)
     ID2 = get_aligned_byte(data)
     if ID1 != 0x1f || ID2 != 0x8b
@@ -392,10 +392,12 @@ function read_gzip_header(data::AbstractInflateData, headers)
 
     data.update_input_crc = false
     if (FLG & 0x02) != 0   # FLG.FHCRC
-        header_crc = finish_crc(data.crc)
         crc16 = getbits(data, 16)
-        if crc16 != (header_crc & 0xffff)
-            error("corrupted data, header crc check failed")
+        if compute_crc
+            header_crc = finish_crc(data.crc)
+            if crc16 != (header_crc & 0xffff)
+                error("corrupted data, header crc check failed")
+            end
         end
     end
 end
@@ -418,9 +420,13 @@ Decompress in memory `source`, in Zlib compressed format. The
 output will also be a `Vector{UInt8}`. For a streaming counterpart,
 see `InflateZlibStream`.
 
+    inflate_zlib(source::Vector{UInt8}; ignore_checksum = true)
+
+Skip computing Adler checksum for consistency checking.
+
 Reference: [RFC 1950](https://www.ietf.org/rfc/rfc1950.txt)
 """
-function inflate_zlib(source::Vector{UInt8})
+function inflate_zlib(source::Vector{UInt8}; ignore_checksum = false)
     data = InflateData(source)
     read_zlib_header(data)
 
@@ -431,7 +437,7 @@ function inflate_zlib(source::Vector{UInt8})
     for i = [24, 16, 8, 0]
         stored_adler |= Int(get_aligned_byte(data)) << i
     end
-    if compute_adler_checksum(out) != stored_adler
+    if !ignore_checksum && compute_adler_checksum(out) != stored_adler
         error("corrupted data, adler checksum error")
     end
 
@@ -450,16 +456,22 @@ see `InflateGzipStream`.
 
 Also retrieve gzip headers in the provided `Dict`.
 
+    inflate_gzip(source::Vector{UInt8}; ignore_checksum = true)
+
+Skip computing CRC of the content, as well as the header, for
+consistency checking.
+
 Reference: [RFC 1952](https://www.ietf.org/rfc/rfc1952.txt)
 """
-function inflate_gzip(source::Vector{UInt8}; headers = nothing)
+function inflate_gzip(source::Vector{UInt8}; headers = nothing,
+                      ignore_checksum = false)
     data = InflateData(source)
-    read_gzip_header(data, headers)
+    read_gzip_header(data, headers, !ignore_checksum)
     out = _inflate(data)
 
     skip_bits_to_byte_boundary(data)
     crc32 = getbits(data, 32)
-    if crc32 != crc(out)
+    if !ignore_checksum && crc32 != crc(out)
         error("corrupted data, crc check failed")
     end
     isize = getbits(data, 32)
@@ -545,15 +557,21 @@ end
 Streaming decompression of Zlib compressed `stream`. For an in memory
 counterpart, see `inflate_zlib`.
 
+    InflateZlibStream(stream::IO; ignore_checksum = true)
+
+Skip computing Adler checksum for consistency checking.
+
 Reference: [RFC 1950](https://www.ietf.org/rfc/rfc1950.txt)
 """
 mutable struct InflateZlibStream <: AbstractInflateStream
     data::StreamingInflateData
     adler::UInt32
+    compute_adler::Bool
 end
 
-function InflateZlibStream(stream::IO)
-    stream = InflateZlibStream(StreamingInflateData(stream), init_adler())
+function InflateZlibStream(stream::IO; ignore_checksum = false)
+    stream = InflateZlibStream(StreamingInflateData(stream), init_adler(),
+                               !ignore_checksum)
     read_zlib_header(stream.data)
     getbyte(stream)
     if eof(stream)
@@ -574,17 +592,25 @@ counterpart, see `inflate_gzip`.
 Also retrieve gzip headers in the provided `Dict`. The headers are
 available directly after the object is constructed.
 
+    InflateGzipStream(stream::IO; ignore_checksum = true)
+
+Skip computing CRC of the content, as well as the header, for
+consistency checking.
+
 Reference: [RFC 1952](https://www.ietf.org/rfc/rfc1952.txt)
 """
 mutable struct InflateGzipStream <: AbstractInflateStream
     data::StreamingInflateData
     crc::UInt32
     num_bytes::Int
+    compute_crc::Bool
 end
 
-function InflateGzipStream(stream::IO; headers = nothing)
-    stream = InflateGzipStream(StreamingInflateData(stream), init_crc(), 0)
-    read_gzip_header(stream.data, headers)
+function InflateGzipStream(stream::IO; headers = nothing,
+                           ignore_checksum = false)
+    stream = InflateGzipStream(StreamingInflateData(stream), init_crc(), 0,
+                               !ignore_checksum)
+    read_gzip_header(stream.data, headers, !ignore_checksum)
     getbyte(stream)
     if eof(stream)
         read_gzip_trailer(stream)
@@ -599,7 +625,7 @@ function read_zlib_trailer(stream::InflateZlibStream)
     for i = [24, 16, 8, 0]
         stored_adler |= Int(get_aligned_byte(stream.data)) << i
     end
-    if computed_adler != stored_adler
+    if stream.compute_adler && computed_adler != stored_adler
         error("corrupted data, adler checksum error")
     end
 end
@@ -608,7 +634,7 @@ function read_gzip_trailer(stream::InflateGzipStream)
     crc = finish_crc(stream.crc)
     skip_bits_to_byte_boundary(stream.data)
     crc32 = getbits(stream.data, 32)
-    if crc32 != crc
+    if stream.compute_crc && crc32 != crc
         error("corrupted data, crc check failed")
     end
     isize = getbits(stream.data, 32)
@@ -646,12 +672,16 @@ end
 
 function write_to_buffer(stream::InflateZlibStream, x::UInt8)
     write_to_buffer(stream.data, x)
-    stream.adler = update_adler(stream.adler, x)
+    if stream.compute_adler
+        stream.adler = update_adler(stream.adler, x)
+    end
 end
 
 function write_to_buffer(stream::InflateGzipStream, x::UInt8)
     write_to_buffer(stream.data, x)
-    stream.crc = update_crc(stream.crc, x)
+    if stream.compute_crc
+        stream.crc = update_crc(stream.crc, x)
+    end
     stream.num_bytes += 1
 end
 

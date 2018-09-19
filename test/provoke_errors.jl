@@ -45,6 +45,8 @@ end
     for z in [z5, z6, z7, z8]
         @test_throws ErrorException inflate_zlib(z)
         @test_throws ErrorException read(InflateZlibStream(IOBuffer(z)))
+        @test isempty(inflate_zlib(z, ignore_checksum = true))
+        @test eof(InflateZlibStream(IOBuffer(z), ignore_checksum = true))
     end
 end
 
@@ -58,6 +60,10 @@ end
     for g in [g1, g2, g3, g4, g5, g6]
         @test_throws ErrorException inflate_gzip(g)
         @test_throws ErrorException InflateGzipStream(IOBuffer(g))
+    end
+    for g in [g5, g6]
+        @test isempty(inflate_gzip(g, ignore_checksum = true))
+        @test eof(InflateGzipStream(IOBuffer(g), ignore_checksum = true))
     end
 end
 
@@ -73,6 +79,10 @@ end
     for g in [g7, g8, g9, g10, g11, g12, g13, g14]
         @test_throws ErrorException inflate_gzip(g)
         @test_throws ErrorException read(InflateGzipStream(IOBuffer(g)))
+    end
+    for g in [g7, g8, g9, g10]
+        @test isempty(inflate_gzip(g, ignore_checksum = true))
+        @test eof(InflateGzipStream(IOBuffer(g), ignore_checksum = true))
     end
 end
 
