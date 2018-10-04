@@ -67,6 +67,14 @@ function get_input_byte(data::InflateData)
     return byte
 end
 
+function get_aligned_bytes(data::InflateData, n::Int)
+    # This isn't called when reading Gzip header, so no need to
+    # consider updating crc.
+    bytes = @view data.bytes[data.bytepos:(data.bytepos + n - 1)]
+    data.bytepos += n
+    return bytes
+end
+
 function getbit(data::AbstractInflateData)
     if data.bitpos == 0
         data.current_byte = Int(get_input_byte(data))
@@ -203,9 +211,7 @@ function _inflate(data::InflateData)
             if len ⊻ nlen != 0xffff
                 error("corrupted data")
             end
-            for i = 1:len
-                push!(out, get_aligned_byte(data))
-            end
+            append!(out, get_aligned_bytes(data, len))
             continue
         elseif compression_mode == 1
             data.literal_or_length_code = fixed_literal_or_length_table
