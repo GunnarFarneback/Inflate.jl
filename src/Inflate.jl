@@ -507,6 +507,8 @@ const buffer_size = 32770
 
 mutable struct StreamingInflateData <: AbstractInflateData
     stream::IO
+    input_buffer::Vector{UInt8}
+    input_buffer_pos::Int
     current_byte::Int
     bitpos::Int
     literal_or_length_code::Vector{Vector{Int}}
@@ -523,14 +525,20 @@ mutable struct StreamingInflateData <: AbstractInflateData
 end
 
 function StreamingInflateData(stream::IO)
-    return StreamingInflateData(stream, 0, 0, fixed_literal_or_length_table,
+    return StreamingInflateData(stream, UInt8[], 1, 0, 0,
+                                fixed_literal_or_length_table,
                                 fixed_distance_table,
                                 zeros(UInt8, buffer_size), 1, 1,
                                 true, 0, -2, false, false, init_crc())
 end
 
 function get_input_byte(data::StreamingInflateData)
-    byte = read(data.stream, UInt8)
+    if data.input_buffer_pos > length(data.input_buffer)
+        data.input_buffer = read(data.stream, 65536)
+        data.input_buffer_pos = 1
+    end
+    byte = data.input_buffer[data.input_buffer_pos]
+    data.input_buffer_pos += 1
     if data.update_input_crc
         data.crc = update_crc(data.crc, byte)
     end
