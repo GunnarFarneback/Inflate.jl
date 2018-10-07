@@ -242,12 +242,11 @@ function _inflate(data::InflateData)
 end
 
 function init_adler()
-    return UInt32(1)
+    return (0, 1)
 end
 
-function update_adler(adler::UInt32, x::UInt8)
-    s1 = Int(adler & 0xffff)
-    s2 = Int(adler >> 16)
+function update_adler(adler::Tuple{Int, Int}, x::UInt8)
+    s2, s1 = adler
     s1 += x
     if s1 >= 65521
         s1 -= 65521
@@ -256,14 +255,15 @@ function update_adler(adler::UInt32, x::UInt8)
     if s2 >= 65521
         s2 -= 65521
     end
-    return (UInt32(s2) << 16) | UInt32(s1)
+    return (s2, s1)
 end
 
 function finish_adler(adler)
-    return adler
+    s2, s1 = adler
+    return (UInt32(s2) << 16) | UInt32(s1)
 end
 
-function compute_adler_checksum(x::Vector{UInt8})
+@inline function compute_adler_checksum(x::Vector{UInt8})
     adler = init_adler()
     for b in x
         adler = update_adler(adler, b)
@@ -571,7 +571,7 @@ Reference: [RFC 1950](https://www.ietf.org/rfc/rfc1950.txt)
 """
 mutable struct InflateZlibStream <: AbstractInflateStream
     data::StreamingInflateData
-    adler::UInt32
+    adler::Tuple{Int, Int}
     compute_adler::Bool
 end
 
