@@ -67,9 +67,9 @@ function get_input_byte(data::InflateData)
     return byte
 end
 
-function get_aligned_bytes(data::InflateData, n::Int)
-    # This isn't called when reading Gzip header, so no need to
-    # consider updating crc.
+# This isn't called when reading Gzip header, so no need to
+# consider updating crc.
+function get_input_bytes(data::InflateData, n::Int)
     bytes = @view data.bytes[data.bytepos:(data.bytepos + n - 1)]
     data.bytepos += n
     return bytes
@@ -211,7 +211,7 @@ function _inflate(data::InflateData)
             if len ⊻ nlen != 0xffff
                 error("corrupted data")
             end
-            append!(out, get_aligned_bytes(data, len))
+            append!(out, get_input_bytes(data, len))
             continue
         elseif compression_mode == 1
             data.literal_or_length_code = fixed_literal_or_length_table
@@ -549,6 +549,19 @@ function get_input_byte(data::StreamingInflateData)
     return byte
 end
 
+# This isn't called when reading Gzip header, so no need to
+# consider updating crc.
+function get_input_bytes(data::StreamingInflateData, n)
+    if data.input_buffer_pos > length(data.input_buffer)
+        data.input_buffer = read(data.stream, 65536)
+        data.input_buffer_pos = 1
+    end
+    n = min(n, length(data.input_buffer) - data.input_buffer_pos + 1)
+    bytes = @view data.input_buffer[data.input_buffer_pos:(data.input_buffer_pos + n - 1)]
+    data.input_buffer_pos += n
+    return bytes
+end
+
 abstract type AbstractInflateStream <: IO end
 
 """
@@ -684,7 +697,16 @@ function write_to_buffer(data::StreamingInflateData, x::UInt8)
     end
 end
 
-function write_to_buffer(stream::InflateStream, x::UInt8)
+function write_to_buffer(data::StreamingInflateData, x::AbstractVector{UInt8})
+    n = length(x)
+    copyto!(data.output_buffer, data.write_pos, x, 1, n)
+    data.write_pos += n
+    if data.write_pos > buffer_size
+        data.write_pos -= buffer_size
+    end
+end
+
+function write_to_buffer(stream::InflateStream, x)
     write_to_buffer(stream.data, x)
 end
 
@@ -692,6 +714,15 @@ function write_to_buffer(stream::InflateZlibStream, x::UInt8)
     write_to_buffer(stream.data, x)
     if stream.compute_adler
         stream.adler = update_adler(stream.adler, x)
+    end
+end
+
+function write_to_buffer(stream::InflateZlibStream, x::AbstractVector{UInt8})
+    write_to_buffer(stream.data, x)
+    if stream.compute_adler
+        for y in x
+            stream.adler = update_adler(stream.adler, y)
+        end
     end
 end
 
@@ -703,12 +734,31 @@ function write_to_buffer(stream::InflateGzipStream, x::UInt8)
     stream.num_bytes += 1
 end
 
+function write_to_buffer(stream::InflateGzipStream, x::AbstractVector{UInt8})
+    write_to_buffer(stream.data, x)
+    if stream.compute_crc
+        for y in x
+            stream.crc = update_crc(stream.crc, y)
+        end
+    end
+    stream.num_bytes += length(x)
+end
+
 function getbyte(stream::AbstractInflateStream)
+    if stream.data.write_pos != stream.data.read_pos
+        return
+    end
+
     if stream.data.pending_bytes > 0
-        stream.data.pending_bytes -= 1
         if stream.data.distance < 0
-            write_to_buffer(stream, get_aligned_byte(stream.data))
+            # Incompressible data.
+            n = min(stream.data.pending_bytes,
+                    buffer_size - stream.data.write_pos + 1)
+            bytes = get_input_bytes(stream.data, n)
+            stream.data.pending_bytes -= length(bytes)
+            write_to_buffer(stream, bytes)
         else
+            stream.data.pending_bytes -= 1
             pos = stream.data.write_pos - stream.data.distance
             if pos <= 0
                 pos += buffer_size
