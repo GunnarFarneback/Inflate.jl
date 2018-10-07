@@ -606,7 +606,7 @@ function InflateZlibStream(stream::IO; ignore_checksum = false)
     read_zlib_header(stream.data)
     getbyte(stream)
     if eof(stream)
-        read_zlib_trailer(stream)
+        read_trailer(stream)
     end
     return stream
 end
@@ -644,12 +644,14 @@ function InflateGzipStream(stream::IO; headers = nothing,
     read_gzip_header(stream.data, headers, !ignore_checksum)
     getbyte(stream)
     if eof(stream)
-        read_gzip_trailer(stream)
+        read_trailer(stream)
     end
     return stream
 end
 
-function read_zlib_trailer(stream::InflateZlibStream)
+read_trailer(stream::InflateStream) = nothing
+
+function read_trailer(stream::InflateZlibStream)
     computed_adler = finish_adler(stream.adler)
     skip_bits_to_byte_boundary(stream.data)
     stored_adler = 0
@@ -661,7 +663,7 @@ function read_zlib_trailer(stream::InflateZlibStream)
     end
 end
 
-function read_gzip_trailer(stream::InflateGzipStream)
+function read_trailer(stream::InflateGzipStream)
     crc = finish_crc(stream.crc)
     skip_bits_to_byte_boundary(stream.data)
     crc32 = getbits(stream.data, 32)
@@ -813,17 +815,7 @@ function Base.eof(stream::AbstractInflateStream)
     return stream.data.read_pos == stream.data.write_pos
 end
 
-function Base.read(stream::InflateStream, ::Type{UInt8})
-    if eof(stream)
-        throw(EOFError())
-    end
-
-    byte = read_output_byte(stream)
-
-    return byte
-end
-
-function Base.read(stream::InflateZlibStream, ::Type{UInt8})
+function Base.read(stream::AbstractInflateStream, ::Type{UInt8})
     if eof(stream)
         throw(EOFError())
     end
@@ -831,21 +823,7 @@ function Base.read(stream::InflateZlibStream, ::Type{UInt8})
     byte = read_output_byte(stream)
 
     if eof(stream)
-        read_zlib_trailer(stream)
-    end
-
-    return byte
-end
-
-function Base.read(stream::InflateGzipStream, ::Type{UInt8})
-    if eof(stream)
-        throw(EOFError())
-    end
-
-    byte = read_output_byte(stream)
-
-    if eof(stream)
-        read_gzip_trailer(stream)
+        read_trailer(stream)
     end
 
     return byte
