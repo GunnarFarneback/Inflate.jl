@@ -231,8 +231,12 @@ function _inflate(data::InflateData)
             else
                 length = getlength(data, v)
                 distance = getdist(data)
-                for i = 1:length
-                    push!(out, out[end - distance + 1])
+                if length <= distance
+                    append!(out, @view out[(end - distance + 1):(end - distance + length)])
+                else
+                    for i = 1:length
+                        push!(out, out[end - distance + 1])
+                    end
                 end
             end
         end
