@@ -505,9 +505,9 @@ end
 
 ### Streaming interface. ###
 
-# Max distance for repeated strings is 32768 (RFC 1951). Add two bytes
-# margin.
-const buffer_size = 32770
+# Max distance for repeated strings is 32768 (RFC 1951). Make it
+# twice the size for better performance.
+const buffer_size = 65536
 
 mutable struct StreamingInflateData <: AbstractInflateData
     stream::IO
@@ -676,8 +676,8 @@ function read_trailer(stream::InflateGzipStream)
     end
 end
 
-function read_output_byte(data::StreamingInflateData)
-    byte = data.output_buffer[data.read_pos]
+@inline function read_output_byte(data::StreamingInflateData)
+    @inbounds byte = data.output_buffer[data.read_pos]
     data.read_pos += 1
     if data.read_pos > buffer_size
         data.read_pos -= buffer_size
@@ -685,10 +685,48 @@ function read_output_byte(data::StreamingInflateData)
     return byte
 end
 
+function read_output_bytes!(data::StreamingInflateData, out, i)
+    if data.read_pos < data.write_pos
+        m = data.write_pos - data.read_pos
+    else
+        m = buffer_size - data.read_pos + 1
+    end
+    if m == 1
+        out[i] = read_output_byte(data)
+        return 1
+    end
+    n = length(out) - i + 1
+    n = min(m, n)
+    copyto!(out, i, data.output_buffer, data.read_pos, n)
+    data.read_pos += n
+    if data.read_pos > buffer_size
+        data.read_pos -= buffer_size
+    end
+    return n
+end
+
 function read_output_byte(stream::AbstractInflateStream)
     byte = read_output_byte(stream.data)
     getbyte(stream)
     return byte
+end
+
+function read_output_bytes!(stream::AbstractInflateStream, out, n)
+    i = 1
+    resized = false
+    while i <= n && !eof(stream)
+        if length(out) < i
+            resize!(out, min(length(out) * 2, n))
+            resized = true
+        end
+        i += read_output_bytes!(stream.data, out, i)
+        getbyte(stream)
+    end
+    i -= 1
+    if resized
+        resize!(out, i)
+    end
+    return i
 end
 
 function write_to_buffer(data::StreamingInflateData, x::UInt8)
@@ -752,20 +790,25 @@ function getbyte(stream::AbstractInflateStream)
     end
 
     if stream.data.pending_bytes > 0
+        if stream.data.read_pos <= stream.data.write_pos
+            n = buffer_size - stream.data.write_pos + 1
+        else
+            n = stream.data.read_pos - stream.data.write_pos - 1
+        end
+        n = min(stream.data.pending_bytes, n)
         if stream.data.distance < 0
             # Incompressible data.
-            n = min(stream.data.pending_bytes,
-                    buffer_size - stream.data.write_pos + 1)
             bytes = get_input_bytes(stream.data, n)
             stream.data.pending_bytes -= length(bytes)
             write_to_buffer(stream, bytes)
         else
-            stream.data.pending_bytes -= 1
             pos = stream.data.write_pos - stream.data.distance
             if pos <= 0
+                n = min(n, 1 - pos)
                 pos += buffer_size
             end
-            write_to_buffer(stream, stream.data.output_buffer[pos])
+            stream.data.pending_bytes -= n
+            write_to_buffer(stream, @view stream.data.output_buffer[pos:(pos + n - 1)])
         end
         return
     end
@@ -827,6 +870,21 @@ function Base.read(stream::AbstractInflateStream, ::Type{UInt8})
     end
 
     return byte
+end
+
+function Base.readbytes!(stream::AbstractInflateStream,
+                         b::AbstractVector{UInt8}, nb = length(b))
+    if eof(stream)
+        return 0
+    end
+
+    n = read_output_bytes!(stream, b, nb)
+
+    if eof(stream)
+        read_trailer(stream)
+    end
+
+    return n
 end
 
 end # module
