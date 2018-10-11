@@ -1,7 +1,7 @@
 # Inflate.jl
 
 Inflate provides a pure Julia implementation of
-[zlib](https://zlib.net) *de*compression functionality, with both in
+[zlib](https://zlib.net) *de*compression functionality, with both in-
 memory and streaming interfaces. This covers decompression of the
 Deflate algorithm and the Zlib and Gzip wrapper formats, as specified
 in [RFC 1950](https://www.ietf.org/rfc/rfc1950.txt),
@@ -22,9 +22,9 @@ compelling or one or more of the following applies to you:
 * Want a full-featured streaming interface.
 * Want a battle-proven library.
 
-## In Memory Decompression
+## In-Memory Decompression
 
-In memory decompression is done by the following functions:
+In-memory decompression is done by the following functions:
 
 | function | decompresses |
 | -------- | ------------ |

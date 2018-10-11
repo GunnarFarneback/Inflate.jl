@@ -1,10 +1,33 @@
 # Pure Julia implementation of decompression of zlib and gzip
 # compressed data, as specified by RFC 1950-1952.
 #
-# Historical note: In memory decompression was implemented in 2013 in
+# Historical note: In-memory decompression was implemented in 2013 in
 # a gist, https://gist.github.com/GunnarFarneback/8254567. Streaming
 # decompression was added in 2018 when it was also turned into a Julia
 # package.
+
+"""
+    Inflate
+
+Pure Julia implementation of decompression of the Deflate format and
+the Zlib and Gzip wrapper formats.
+
+In-memory decompression is done by the following functions:
+
+| function | decompresses |
+| -------- | ------------ |
+| `inflate(data::Vector{UInt8})` | Deflate data |
+| `inflate_zlib(data::Vector{UInt8})` | Zlib data |
+| `inflate_gzip(data::Vector{UInt8})` | Gzip data |
+
+Streaming decompression is done using the following types:
+
+| stream | decompresses |
+| ------ | ------------ |
+| `InflateStream(stream::IO)` | Deflate stream |
+| `InflateZlibStream(stream::IO)` | Zlib stream |
+| `InflateGzipStream(stream::IO)` | Gzip stream |
+"""
 module Inflate
 
 export inflate, inflate_zlib, inflate_gzip,
@@ -415,7 +438,7 @@ end
 """
     inflate(source::Vector{UInt8})
 
-Decompress in memory `source`, in unwrapped deflate format. The
+Decompress in-memory `source`, in unwrapped deflate format. The
 output will also be a `Vector{UInt8}`. For a streaming counterpart,
 see `InflateStream`.
 
@@ -426,7 +449,7 @@ inflate(source::Vector{UInt8}) = _inflate(InflateData(source))
 """
     inflate_zlib(source::Vector{UInt8})
 
-Decompress in memory `source`, in Zlib compressed format. The
+Decompress in-memory `source`, in Zlib compressed format. The
 output will also be a `Vector{UInt8}`. For a streaming counterpart,
 see `InflateZlibStream`.
 
@@ -457,7 +480,7 @@ end
 """
     inflate_gzip(source::Vector{UInt8})
 
-Decompress in memory `source`, in Gzip compressed format. The
+Decompress in-memory `source`, in Gzip compressed format. The
 output will also be a `Vector{UInt8}`. For a streaming counterpart,
 see `InflateGzipStream`.
 
@@ -568,7 +591,7 @@ abstract type AbstractInflateStream <: IO end
     InflateStream(stream::IO)
 
 Streaming decompression of unwrapped deflate compressed `stream`. For
-an in memory counterpart, see `inflate`.
+an in-memory counterpart, see `inflate`.
 
 Reference: [RFC 1951](https://www.ietf.org/rfc/rfc1951.txt)
 """
@@ -585,7 +608,7 @@ end
 """
     InflateZlibStream(stream::IO)
 
-Streaming decompression of Zlib compressed `stream`. For an in memory
+Streaming decompression of Zlib compressed `stream`. For an in-memory
 counterpart, see `inflate_zlib`.
 
     InflateZlibStream(stream::IO; ignore_checksum = true)
@@ -614,7 +637,7 @@ end
 """
     InflateGzipStream(stream::IO)
 
-Streaming decompression of Gzip compressed `stream`. For an in memory
+Streaming decompression of Gzip compressed `stream`. For an in-memory
 counterpart, see `inflate_gzip`.
 
     gzip_headers = Dict{String, Any}()
