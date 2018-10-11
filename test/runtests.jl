@@ -60,5 +60,12 @@ gz = gzip_with_header("foo", mtime, os, fextra, fname, fcomment, true)
     @test headers["fcomment"] == fcomment
 end
 
+# Test readline interface and get coverage of read(stream, UInt8).
+@testset "readline" begin
+    s = "one line of text\n"
+    @test readline(InflateGzipStream(GzipCompressorStream(IOBuffer(s))),
+                   keep = true) == s
+end
+
 # Test failure cases, mostly corrupt data.
 include("provoke_errors.jl")
