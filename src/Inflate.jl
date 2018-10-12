@@ -1,10 +1,33 @@
 # Pure Julia implementation of decompression of zlib and gzip
 # compressed data, as specified by RFC 1950-1952.
 #
-# Historical note: In memory decompression was implemented in 2013 in
+# Historical note: In-memory decompression was implemented in 2013 in
 # a gist, https://gist.github.com/GunnarFarneback/8254567. Streaming
 # decompression was added in 2018 when it was also turned into a Julia
 # package.
+
+"""
+    Inflate
+
+Pure Julia implementation of decompression of the Deflate format and
+the Zlib and Gzip wrapper formats.
+
+In-memory decompression is done by the following functions:
+
+| function | decompresses |
+| -------- | ------------ |
+| `inflate(data::Vector{UInt8})` | Deflate data |
+| `inflate_zlib(data::Vector{UInt8})` | Zlib data |
+| `inflate_gzip(data::Vector{UInt8})` | Gzip data |
+
+Streaming decompression is done using the following types:
+
+| stream | decompresses |
+| ------ | ------------ |
+| `InflateStream(stream::IO)` | Deflate stream |
+| `InflateZlibStream(stream::IO)` | Zlib stream |
+| `InflateGzipStream(stream::IO)` | Gzip stream |
+"""
 module Inflate
 
 export inflate, inflate_zlib, inflate_gzip,
@@ -65,6 +88,14 @@ function get_input_byte(data::InflateData)
         data.crc = update_crc(data.crc, byte)
     end
     return byte
+end
+
+# This isn't called when reading Gzip header, so no need to
+# consider updating crc.
+function get_input_bytes(data::InflateData, n::Int)
+    bytes = @view data.bytes[data.bytepos:(data.bytepos + n - 1)]
+    data.bytepos += n
+    return bytes
 end
 
 function getbit(data::AbstractInflateData)
@@ -203,9 +234,7 @@ function _inflate(data::InflateData)
             if len ⊻ nlen != 0xffff
                 error("corrupted data")
             end
-            for i = 1:len
-                push!(out, get_aligned_byte(data))
-            end
+            append!(out, get_input_bytes(data, len))
             continue
         elseif compression_mode == 1
             data.literal_or_length_code = fixed_literal_or_length_table
@@ -225,8 +254,12 @@ function _inflate(data::InflateData)
             else
                 length = getlength(data, v)
                 distance = getdist(data)
-                for i = 1:length
-                    push!(out, out[end - distance + 1])
+                if length <= distance
+                    append!(out, @view out[(end - distance + 1):(end - distance + length)])
+                else
+                    for i = 1:length
+                        push!(out, out[end - distance + 1])
+                    end
                 end
             end
         end
@@ -236,12 +269,11 @@ function _inflate(data::InflateData)
 end
 
 function init_adler()
-    return UInt32(1)
+    return (0, 1)
 end
 
-function update_adler(adler::UInt32, x::UInt8)
-    s1 = Int(adler & 0xffff)
-    s2 = Int(adler >> 16)
+function update_adler(adler::Tuple{Int, Int}, x::UInt8)
+    s2, s1 = adler
     s1 += x
     if s1 >= 65521
         s1 -= 65521
@@ -250,14 +282,15 @@ function update_adler(adler::UInt32, x::UInt8)
     if s2 >= 65521
         s2 -= 65521
     end
-    return (UInt32(s2) << 16) | UInt32(s1)
+    return (s2, s1)
 end
 
 function finish_adler(adler)
-    return adler
+    s2, s1 = adler
+    return (UInt32(s2) << 16) | UInt32(s1)
 end
 
-function compute_adler_checksum(x::Vector{UInt8})
+@inline function compute_adler_checksum(x::Vector{UInt8})
     adler = init_adler()
     for b in x
         adler = update_adler(adler, b)
@@ -405,7 +438,7 @@ end
 """
     inflate(source::Vector{UInt8})
 
-Decompress in memory `source`, in unwrapped deflate format. The
+Decompress in-memory `source`, in unwrapped deflate format. The
 output will also be a `Vector{UInt8}`. For a streaming counterpart,
 see `InflateStream`.
 
@@ -416,7 +449,7 @@ inflate(source::Vector{UInt8}) = _inflate(InflateData(source))
 """
     inflate_zlib(source::Vector{UInt8})
 
-Decompress in memory `source`, in Zlib compressed format. The
+Decompress in-memory `source`, in Zlib compressed format. The
 output will also be a `Vector{UInt8}`. For a streaming counterpart,
 see `InflateZlibStream`.
 
@@ -447,7 +480,7 @@ end
 """
     inflate_gzip(source::Vector{UInt8})
 
-Decompress in memory `source`, in Gzip compressed format. The
+Decompress in-memory `source`, in Gzip compressed format. The
 output will also be a `Vector{UInt8}`. For a streaming counterpart,
 see `InflateGzipStream`.
 
@@ -495,12 +528,14 @@ end
 
 ### Streaming interface. ###
 
-# Max distance for repeated strings is 32768 (RFC 1951). Add two bytes
-# margin.
-const buffer_size = 32770
+# Max distance for repeated strings is 32768 (RFC 1951). Make it
+# twice the size for better performance.
+const buffer_size = 65536
 
 mutable struct StreamingInflateData <: AbstractInflateData
     stream::IO
+    input_buffer::Vector{UInt8}
+    input_buffer_pos::Int
     current_byte::Int
     bitpos::Int
     literal_or_length_code::Vector{Vector{Int}}
@@ -517,18 +552,37 @@ mutable struct StreamingInflateData <: AbstractInflateData
 end
 
 function StreamingInflateData(stream::IO)
-    return StreamingInflateData(stream, 0, 0, fixed_literal_or_length_table,
+    return StreamingInflateData(stream, UInt8[], 1, 0, 0,
+                                fixed_literal_or_length_table,
                                 fixed_distance_table,
                                 zeros(UInt8, buffer_size), 1, 1,
                                 true, 0, -2, false, false, init_crc())
 end
 
 function get_input_byte(data::StreamingInflateData)
-    byte = read(data.stream, UInt8)
+    if data.input_buffer_pos > length(data.input_buffer)
+        data.input_buffer = read(data.stream, 65536)
+        data.input_buffer_pos = 1
+    end
+    byte = data.input_buffer[data.input_buffer_pos]
+    data.input_buffer_pos += 1
     if data.update_input_crc
         data.crc = update_crc(data.crc, byte)
     end
     return byte
+end
+
+# This isn't called when reading Gzip header, so no need to
+# consider updating crc.
+function get_input_bytes(data::StreamingInflateData, n)
+    if data.input_buffer_pos > length(data.input_buffer)
+        data.input_buffer = read(data.stream, 65536)
+        data.input_buffer_pos = 1
+    end
+    n = min(n, length(data.input_buffer) - data.input_buffer_pos + 1)
+    bytes = @view data.input_buffer[data.input_buffer_pos:(data.input_buffer_pos + n - 1)]
+    data.input_buffer_pos += n
+    return bytes
 end
 
 abstract type AbstractInflateStream <: IO end
@@ -537,7 +591,7 @@ abstract type AbstractInflateStream <: IO end
     InflateStream(stream::IO)
 
 Streaming decompression of unwrapped deflate compressed `stream`. For
-an in memory counterpart, see `inflate`.
+an in-memory counterpart, see `inflate`.
 
 Reference: [RFC 1951](https://www.ietf.org/rfc/rfc1951.txt)
 """
@@ -554,7 +608,7 @@ end
 """
     InflateZlibStream(stream::IO)
 
-Streaming decompression of Zlib compressed `stream`. For an in memory
+Streaming decompression of Zlib compressed `stream`. For an in-memory
 counterpart, see `inflate_zlib`.
 
     InflateZlibStream(stream::IO; ignore_checksum = true)
@@ -565,7 +619,7 @@ Reference: [RFC 1950](https://www.ietf.org/rfc/rfc1950.txt)
 """
 mutable struct InflateZlibStream <: AbstractInflateStream
     data::StreamingInflateData
-    adler::UInt32
+    adler::Tuple{Int, Int}
     compute_adler::Bool
 end
 
@@ -575,7 +629,7 @@ function InflateZlibStream(stream::IO; ignore_checksum = false)
     read_zlib_header(stream.data)
     getbyte(stream)
     if eof(stream)
-        read_zlib_trailer(stream)
+        read_trailer(stream)
     end
     return stream
 end
@@ -583,7 +637,7 @@ end
 """
     InflateGzipStream(stream::IO)
 
-Streaming decompression of Gzip compressed `stream`. For an in memory
+Streaming decompression of Gzip compressed `stream`. For an in-memory
 counterpart, see `inflate_gzip`.
 
     gzip_headers = Dict{String, Any}()
@@ -613,12 +667,14 @@ function InflateGzipStream(stream::IO; headers = nothing,
     read_gzip_header(stream.data, headers, !ignore_checksum)
     getbyte(stream)
     if eof(stream)
-        read_gzip_trailer(stream)
+        read_trailer(stream)
     end
     return stream
 end
 
-function read_zlib_trailer(stream::InflateZlibStream)
+read_trailer(stream::InflateStream) = nothing
+
+function read_trailer(stream::InflateZlibStream)
     computed_adler = finish_adler(stream.adler)
     skip_bits_to_byte_boundary(stream.data)
     stored_adler = 0
@@ -630,7 +686,7 @@ function read_zlib_trailer(stream::InflateZlibStream)
     end
 end
 
-function read_gzip_trailer(stream::InflateGzipStream)
+function read_trailer(stream::InflateGzipStream)
     crc = finish_crc(stream.crc)
     skip_bits_to_byte_boundary(stream.data)
     crc32 = getbits(stream.data, 32)
@@ -643,8 +699,8 @@ function read_gzip_trailer(stream::InflateGzipStream)
     end
 end
 
-function read_output_byte(data::StreamingInflateData)
-    byte = data.output_buffer[data.read_pos]
+@inline function read_output_byte(data::StreamingInflateData)
+    @inbounds byte = data.output_buffer[data.read_pos]
     data.read_pos += 1
     if data.read_pos > buffer_size
         data.read_pos -= buffer_size
@@ -652,10 +708,48 @@ function read_output_byte(data::StreamingInflateData)
     return byte
 end
 
+function read_output_bytes!(data::StreamingInflateData, out, i)
+    if data.read_pos < data.write_pos
+        m = data.write_pos - data.read_pos
+    else
+        m = buffer_size - data.read_pos + 1
+    end
+    if m == 1
+        out[i] = read_output_byte(data)
+        return 1
+    end
+    n = length(out) - i + 1
+    n = min(m, n)
+    copyto!(out, i, data.output_buffer, data.read_pos, n)
+    data.read_pos += n
+    if data.read_pos > buffer_size
+        data.read_pos -= buffer_size
+    end
+    return n
+end
+
 function read_output_byte(stream::AbstractInflateStream)
     byte = read_output_byte(stream.data)
     getbyte(stream)
     return byte
+end
+
+function read_output_bytes!(stream::AbstractInflateStream, out, n)
+    i = 1
+    resized = false
+    while i <= n && !eof(stream)
+        if length(out) < i
+            resize!(out, min(length(out) * 2, n))
+            resized = true
+        end
+        i += read_output_bytes!(stream.data, out, i)
+        getbyte(stream)
+    end
+    i -= 1
+    if resized
+        resize!(out, i)
+    end
+    return i
 end
 
 function write_to_buffer(data::StreamingInflateData, x::UInt8)
@@ -666,7 +760,16 @@ function write_to_buffer(data::StreamingInflateData, x::UInt8)
     end
 end
 
-function write_to_buffer(stream::InflateStream, x::UInt8)
+function write_to_buffer(data::StreamingInflateData, x::AbstractVector{UInt8})
+    n = length(x)
+    copyto!(data.output_buffer, data.write_pos, x, 1, n)
+    data.write_pos += n
+    if data.write_pos > buffer_size
+        data.write_pos -= buffer_size
+    end
+end
+
+function write_to_buffer(stream::InflateStream, x)
     write_to_buffer(stream.data, x)
 end
 
@@ -674,6 +777,15 @@ function write_to_buffer(stream::InflateZlibStream, x::UInt8)
     write_to_buffer(stream.data, x)
     if stream.compute_adler
         stream.adler = update_adler(stream.adler, x)
+    end
+end
+
+function write_to_buffer(stream::InflateZlibStream, x::AbstractVector{UInt8})
+    write_to_buffer(stream.data, x)
+    if stream.compute_adler
+        for y in x
+            stream.adler = update_adler(stream.adler, y)
+        end
     end
 end
 
@@ -685,17 +797,41 @@ function write_to_buffer(stream::InflateGzipStream, x::UInt8)
     stream.num_bytes += 1
 end
 
+function write_to_buffer(stream::InflateGzipStream, x::AbstractVector{UInt8})
+    write_to_buffer(stream.data, x)
+    if stream.compute_crc
+        for y in x
+            stream.crc = update_crc(stream.crc, y)
+        end
+    end
+    stream.num_bytes += length(x)
+end
+
 function getbyte(stream::AbstractInflateStream)
+    if stream.data.write_pos != stream.data.read_pos
+        return
+    end
+
     if stream.data.pending_bytes > 0
-        stream.data.pending_bytes -= 1
+        if stream.data.read_pos <= stream.data.write_pos
+            n = buffer_size - stream.data.write_pos + 1
+        else
+            n = stream.data.read_pos - stream.data.write_pos - 1
+        end
+        n = min(stream.data.pending_bytes, n)
         if stream.data.distance < 0
-            write_to_buffer(stream, get_aligned_byte(stream.data))
+            # Incompressible data.
+            bytes = get_input_bytes(stream.data, n)
+            stream.data.pending_bytes -= length(bytes)
+            write_to_buffer(stream, bytes)
         else
             pos = stream.data.write_pos - stream.data.distance
             if pos <= 0
+                n = min(n, 1 - pos)
                 pos += buffer_size
             end
-            write_to_buffer(stream, stream.data.output_buffer[pos])
+            stream.data.pending_bytes -= n
+            write_to_buffer(stream, @view stream.data.output_buffer[pos:(pos + n - 1)])
         end
         return
     end
@@ -745,17 +881,7 @@ function Base.eof(stream::AbstractInflateStream)
     return stream.data.read_pos == stream.data.write_pos
 end
 
-function Base.read(stream::InflateStream, ::Type{UInt8})
-    if eof(stream)
-        throw(EOFError())
-    end
-
-    byte = read_output_byte(stream)
-
-    return byte
-end
-
-function Base.read(stream::InflateZlibStream, ::Type{UInt8})
+function Base.read(stream::AbstractInflateStream, ::Type{UInt8})
     if eof(stream)
         throw(EOFError())
     end
@@ -763,24 +889,25 @@ function Base.read(stream::InflateZlibStream, ::Type{UInt8})
     byte = read_output_byte(stream)
 
     if eof(stream)
-        read_zlib_trailer(stream)
+        read_trailer(stream)
     end
 
     return byte
 end
 
-function Base.read(stream::InflateGzipStream, ::Type{UInt8})
+function Base.readbytes!(stream::AbstractInflateStream,
+                         b::AbstractVector{UInt8}, nb = length(b))
     if eof(stream)
-        throw(EOFError())
+        return 0
     end
 
-    byte = read_output_byte(stream)
+    n = read_output_bytes!(stream, b, nb)
 
     if eof(stream)
-        read_gzip_trailer(stream)
+        read_trailer(stream)
     end
 
-    return byte
+    return n
 end
 
 end # module

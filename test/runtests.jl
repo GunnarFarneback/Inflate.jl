@@ -33,6 +33,19 @@ end
     end
 end
 
+@testset "Huffman compressible data" begin
+    Random.seed!(1)
+    for n in [0, 1, 10, 100, 1000, 10000, 100000, 1000000]
+        data = rand(UInt8, n) .& 0x0f
+        @test inflate(read(DeflateCompressorStream(IOBuffer(data)))) == data
+        @test inflate_zlib(read(ZlibCompressorStream(IOBuffer(data)))) == data
+        @test inflate_gzip(read(GzipCompressorStream(IOBuffer(data)))) == data
+        @test read(InflateStream(DeflateCompressorStream(IOBuffer(data)))) == data
+        @test read(InflateZlibStream(ZlibCompressorStream(IOBuffer(data)))) == data
+        @test read(InflateGzipStream(GzipCompressorStream(IOBuffer(data)))) == data
+    end
+end
+
 # Test gzip headers, including header CRC.
 include("gzip_with_header.jl")
 os = 255   # Unknown
@@ -58,6 +71,13 @@ gz = gzip_with_header("foo", mtime, os, fextra, fname, fcomment, true)
     @test headers["fextra"] == fextra
     @test headers["fname"] == fname
     @test headers["fcomment"] == fcomment
+end
+
+# Test readline interface and get coverage of read(stream, UInt8).
+@testset "readline" begin
+    s = "one line of text\n"
+    @test readline(InflateGzipStream(GzipCompressorStream(IOBuffer(s))),
+                   keep = true) == s
 end
 
 # Test failure cases, mostly corrupt data.
