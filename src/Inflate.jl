@@ -783,4 +783,6 @@ function Base.read(stream::InflateGzipStream, ::Type{UInt8})
     return byte
 end
 
+include("deflate.jl")
+
 end # module
