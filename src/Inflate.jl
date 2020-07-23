@@ -72,26 +72,19 @@ mutable struct InflateData <: AbstractInflateData
     bitpos::Int
     literal_or_length_code::Vector{Vector{Int}}
     distance_code::Vector{Vector{Int}}
-    update_input_crc::Bool
-    crc::UInt32
 end
 
 function InflateData(source::Vector{UInt8})
     InflateData(source, 0, 1, 0, fixed_literal_or_length_table,
-                fixed_distance_table, false, init_crc())
+                fixed_distance_table)
 end
 
 function get_input_byte(data::InflateData)
     byte = data.bytes[data.bytepos]
     data.bytepos += 1
-    if data.update_input_crc
-        data.crc = update_crc(data.crc, byte)
-    end
     return byte
 end
 
-# This isn't called when reading Gzip header, so no need to
-# consider updating crc.
 function get_input_bytes(data::InflateData, n::Int)
     bytes = @view data.bytes[data.bytepos:(data.bytepos + n - 1)]
     data.bytepos += n
@@ -129,6 +122,27 @@ end
 # at zero, e.g. by calling skip_bits_to_byte_boundary.
 function get_aligned_byte(data::AbstractInflateData)
     return get_input_byte(data)
+end
+
+get_aligned_byte(data::AbstractInflateData, ::Nothing) = get_aligned_byte(data)
+function get_aligned_byte(data::AbstractInflateData, crc::Ref{UInt32})
+    byte = get_input_byte(data)
+    crc[] = update_crc(crc[], byte)
+    return byte
+end
+
+function get_aligned_uint16(data::AbstractInflateData,
+                            crc::Union{Nothing, Ref{UInt32}})
+    byte1 = get_aligned_byte(data, crc)
+    byte2 = get_aligned_byte(data, crc)
+    return (UInt16(byte2) << 8) | UInt16(byte1)
+end
+
+function get_aligned_uint32(data::AbstractInflateData,
+                            crc::Union{Nothing, Ref{UInt32}})
+    word1 = get_aligned_uint16(data, crc)
+    word2 = get_aligned_uint16(data, crc)
+    return (UInt32(word2) << 16) | UInt32(word1)
 end
 
 function get_value_from_code(data::AbstractInflateData,
@@ -337,10 +351,11 @@ function crc(x::Vector{UInt8})
     return finish_crc(c)
 end
 
-function read_zero_terminated_data(data::AbstractInflateData)
+function read_zero_terminated_data(data::AbstractInflateData,
+                                   crc::Union{Nothing, Ref{UInt32}})
     s = UInt8[]
     while true
-        c = get_aligned_byte(data)
+        c = get_aligned_byte(data, crc)
         push!(s, c)
         if c == 0
             break
@@ -371,20 +386,25 @@ function read_zlib_header(data::AbstractInflateData)
 end
 
 function read_gzip_header(data::AbstractInflateData, headers, compute_crc)
-    data.update_input_crc = compute_crc
-    ID1 = get_aligned_byte(data)
-    ID2 = get_aligned_byte(data)
+    if compute_crc
+        crc = Ref{UInt32}(init_crc())
+    else
+        crc = nothing
+    end
+
+    ID1 = get_aligned_byte(data, crc)
+    ID2 = get_aligned_byte(data, crc)
     if ID1 != 0x1f || ID2 != 0x8b
         error("not gzipped data")
     end
-    CM = get_aligned_byte(data)
+    CM = get_aligned_byte(data, crc)
     if CM != 8
         error("unsupported compression method")
     end
-    FLG = get_aligned_byte(data)
-    MTIME = getbits(data, 32)
-    XFL = get_aligned_byte(data)
-    OS = get_aligned_byte(data)
+    FLG = get_aligned_byte(data, crc)
+    MTIME = get_aligned_uint32(data, crc)
+    XFL = get_aligned_byte(data, crc)
+    OS = get_aligned_byte(data, crc)
 
     if headers != nothing
         headers["mtime"] = MTIME
@@ -392,13 +412,13 @@ function read_gzip_header(data::AbstractInflateData, headers, compute_crc)
     end
 
     if (FLG & 0x04) != 0   # FLG.FEXTRA
-        xlen = getbits(data, 16)
+        xlen = get_aligned_uint16(data, crc)
         if headers != nothing
             headers["fextra"] = zeros(UInt8, xlen)
         end
 
         for i = 1:xlen
-            b = get_aligned_byte(data)
+            b = get_aligned_byte(data, crc)
             if headers != nothing
                 headers["fextra"][i] = b
             end
@@ -406,14 +426,14 @@ function read_gzip_header(data::AbstractInflateData, headers, compute_crc)
     end
 
     if (FLG & 0x08) != 0   # FLG.FNAME
-        name = read_zero_terminated_data(data)
+        name = read_zero_terminated_data(data, crc)
         if headers != nothing
             headers["fname"] = String(name[1:end-1])
         end
     end
 
     if (FLG & 0x10) != 0   # FLG.FCOMMENT
-        comment = read_zero_terminated_data(data)
+        comment = read_zero_terminated_data(data, crc)
         if headers != nothing
             headers["fcomment"] = String(comment[1:end-1])
         end
@@ -423,11 +443,10 @@ function read_gzip_header(data::AbstractInflateData, headers, compute_crc)
         error("reserved FLG bit set")
     end
 
-    data.update_input_crc = false
     if (FLG & 0x02) != 0   # FLG.FHCRC
         crc16 = getbits(data, 16)
         if compute_crc
-            header_crc = finish_crc(data.crc)
+            header_crc = finish_crc(crc[])
             if crc16 != (header_crc & 0xffff)
                 error("corrupted data, header crc check failed")
             end
@@ -547,8 +566,6 @@ mutable struct StreamingInflateData <: AbstractInflateData
     pending_bytes::Int
     distance::Int
     reading_final_block::Bool
-    update_input_crc::Bool
-    crc::UInt32
 end
 
 function StreamingInflateData(stream::IO)
@@ -556,7 +573,7 @@ function StreamingInflateData(stream::IO)
                                 fixed_literal_or_length_table,
                                 fixed_distance_table,
                                 zeros(UInt8, buffer_size), 1, 1,
-                                true, 0, -2, false, false, init_crc())
+                                true, 0, -2, false)
 end
 
 function get_input_byte(data::StreamingInflateData)
@@ -566,14 +583,9 @@ function get_input_byte(data::StreamingInflateData)
     end
     byte = data.input_buffer[data.input_buffer_pos]
     data.input_buffer_pos += 1
-    if data.update_input_crc
-        data.crc = update_crc(data.crc, byte)
-    end
     return byte
 end
 
-# This isn't called when reading Gzip header, so no need to
-# consider updating crc.
 function get_input_bytes(data::StreamingInflateData, n)
     if data.input_buffer_pos > length(data.input_buffer)
         data.input_buffer = read(data.stream, 65536)
