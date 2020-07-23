@@ -85,7 +85,7 @@ function get_input_byte(data::InflateData)
     return byte
 end
 
-function get_input_bytes(data::InflateData, n::Int)
+function get_input_bytes(data::InflateData, n::Integer)
     bytes = @view data.bytes[data.bytepos:(data.bytepos + n - 1)]
     data.bytepos += n
     return bytes
@@ -132,14 +132,14 @@ function get_aligned_byte(data::AbstractInflateData, crc::Ref{UInt32})
 end
 
 function get_aligned_uint16(data::AbstractInflateData,
-                            crc::Union{Nothing, Ref{UInt32}})
+                            crc::Union{Nothing, Ref{UInt32}} = nothing)
     byte1 = get_aligned_byte(data, crc)
     byte2 = get_aligned_byte(data, crc)
     return (UInt16(byte2) << 8) | UInt16(byte1)
 end
 
 function get_aligned_uint32(data::AbstractInflateData,
-                            crc::Union{Nothing, Ref{UInt32}})
+                            crc::Union{Nothing, Ref{UInt32}} = nothing)
     word1 = get_aligned_uint16(data, crc)
     word2 = get_aligned_uint16(data, crc)
     return (UInt32(word2) << 16) | UInt32(word1)
@@ -243,8 +243,8 @@ function _inflate(data::InflateData)
         compression_mode = getbits(data, 2)
         if compression_mode == 0
             skip_bits_to_byte_boundary(data)
-            len = getbits(data, 16)
-            nlen = getbits(data, 16)
+            len = get_aligned_uint16(data)
+            nlen = get_aligned_uint16(data)
             if len ⊻ nlen != 0xffff
                 error("corrupted data")
             end
@@ -444,7 +444,7 @@ function read_gzip_header(data::AbstractInflateData, headers, compute_crc)
     end
 
     if (FLG & 0x02) != 0   # FLG.FHCRC
-        crc16 = getbits(data, 16)
+        crc16 = get_aligned_uint16(data)
         if compute_crc
             header_crc = finish_crc(crc[])
             if crc16 != (header_crc & 0xffff)
@@ -522,11 +522,11 @@ function inflate_gzip(source::Vector{UInt8}; headers = nothing,
     out = _inflate(data)
 
     skip_bits_to_byte_boundary(data)
-    crc32 = getbits(data, 32)
+    crc32 = get_aligned_uint32(data)
     if !ignore_checksum && crc32 != crc(out)
         error("corrupted data, crc check failed")
     end
-    isize = getbits(data, 32)
+    isize = get_aligned_uint32(data)
     if isize != length(out)
         error("corrupted data, length check failed")
     end
@@ -701,11 +701,11 @@ end
 function read_trailer(stream::InflateGzipStream)
     crc = finish_crc(stream.crc)
     skip_bits_to_byte_boundary(stream.data)
-    crc32 = getbits(stream.data, 32)
+    crc32 = get_aligned_uint32(stream.data)
     if stream.compute_crc && crc32 != crc
         error("corrupted data, crc check failed")
     end
-    isize = getbits(stream.data, 32)
+    isize = get_aligned_uint32(stream.data)
     if isize != stream.num_bytes
         error("corrupted data, length check failed")
     end
@@ -856,8 +856,8 @@ function getbyte(stream::AbstractInflateStream)
         compression_mode = getbits(stream.data, 2)
         if compression_mode == 0
             skip_bits_to_byte_boundary(stream.data)
-            len = getbits(stream.data, 16)
-            nlen = getbits(stream.data, 16)
+            len = get_aligned_uint16(stream.data)
+            nlen = get_aligned_uint16(stream.data)
             if len ⊻ nlen != 0xffff
                 error("corrupted data")
             end
