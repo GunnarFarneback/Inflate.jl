@@ -235,8 +235,15 @@ function read_code_tables(data::AbstractInflateData)
     data.distance_code = transform_code_lengths_to_code(code_lengths[(hlit+1):end])
 end
 
+function grow_if_needed!(out, out_pos, n)
+    while out_pos + n > length(out)
+        resize!(out, length(out) + 65536)
+    end
+end
+
 function _inflate(data::InflateData)
-    out = UInt8[]
+    out = Vector{UInt8}(undef, 65536)
+    out_pos = 1
     final_block = false
     while !final_block
         final_block = getbits(data, 1) == 1
@@ -248,7 +255,10 @@ function _inflate(data::InflateData)
             if len ⊻ nlen != 0xffff
                 error("corrupted data")
             end
-            append!(out, get_input_bytes(data, len))
+            grow_if_needed!(out, out_pos, len)
+            copyto!(out, out_pos, data.bytes, data.bytepos, len)
+            out_pos += len
+            data.bytepos += len
             continue
         elseif compression_mode == 1
             data.literal_or_length_code = fixed_literal_or_length_table
@@ -262,23 +272,27 @@ function _inflate(data::InflateData)
         while true
             v = get_literal_or_length(data)
             if v < 256
-                push!(out, UInt8(v))
+                grow_if_needed!(out, out_pos, 1)
+                out[out_pos] = UInt8(v)
+                out_pos += 1
             elseif v == 256
                 break
             else
                 length = getlength(data, v)
                 distance = getdist(data)
-                if length <= distance
-                    append!(out, @view out[(end - distance + 1):(end - distance + length)])
-                else
-                    for i = 1:length
-                        push!(out, out[end - distance + 1])
-                    end
+                grow_if_needed!(out, out_pos, length)
+                while length > distance
+                    copyto!(out, out_pos, out, out_pos - distance, distance)
+                    out_pos += distance
+                    length -= distance
                 end
+                copyto!(out, out_pos, out, out_pos - distance, length)
+                out_pos += length
             end
         end
     end
 
+    resize!(out, out_pos - 1)
     return out
 end
 
