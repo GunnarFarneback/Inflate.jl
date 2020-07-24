@@ -237,7 +237,7 @@ end
 
 function grow_if_needed!(out, out_pos, n)
     while out_pos + n > length(out)
-        resize!(out, length(out) + 65536)
+        resize!(out, length(out) + 1048576)
     end
 end
 
