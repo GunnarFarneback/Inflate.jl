@@ -85,12 +85,6 @@ function get_input_byte(data::InflateData)
     return byte
 end
 
-function get_input_bytes(data::InflateData, n::Integer)
-    bytes = @view data.bytes[data.bytepos:(data.bytepos + n - 1)]
-    data.bytepos += n
-    return bytes
-end
-
 function getbit(data::AbstractInflateData)
     if data.bitpos == 0
         data.current_byte = Int(get_input_byte(data))
