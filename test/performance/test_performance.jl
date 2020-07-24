@@ -118,9 +118,7 @@ end
 function print_markdown_table(results, mode)
     mode_string = Dict(:in_memory => "In Memory", :streaming => "Streaming")[mode]
     data_types = [:incompressible, :huffman, :runlength, :graph]
-    # TODO: Find a proper way to retrieve the version number from Pkg.
-    version = Pkg.API.Context().env.manifest["Inflate"][1]["version"]
-    print_markdown_row(vcat(version, mode_string, fill("", 4)))
+    print_markdown_row(vcat("", mode_string, fill("", 4)))
     print_markdown_row(fill("-", 6))
     print_markdown_row(vcat("", "", string.(data_types)))
     for data_size in [:small, :medium, :large]
