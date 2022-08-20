@@ -829,6 +829,9 @@ function getbyte(stream::AbstractInflateStream)
             if pos <= 0
                 n = min(n, 1 - pos)
                 pos += buffer_size
+            else
+                # Needed to avoid aliased `copyto!`.
+                n = min(n, stream.data.distance)
             end
             stream.data.pending_bytes -= n
             write_to_buffer(stream, @view stream.data.output_buffer[pos:(pos + n - 1)])
