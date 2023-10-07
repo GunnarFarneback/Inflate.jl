@@ -1,6 +1,6 @@
 [deps]
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
-Inflate = "5759bcd8-b781-11e8-19cb-9f31d28d2f91"
-LightGraphs = "093fc24a-ae57-5d10-9952-331d41423f4d"
+Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
+Inflate = "d25df0c9-e2be-5dd7-82c8-3ad0b3e990b9"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"

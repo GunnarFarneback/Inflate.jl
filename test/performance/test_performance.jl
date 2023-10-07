@@ -5,7 +5,7 @@ Pkg.instantiate()
 using Inflate
 using BenchmarkTools
 using CodecZlib
-using LightGraphs
+using Graphs
 using StatsBase
 using Random
 using Printf
@@ -29,7 +29,7 @@ function runlength(n)
     return x
 end
 
-# Generate a LightGraphs save file of length approximately `n`.
+# Generate a Graphs save file of length approximately `n`.
 # Note: the balance between nodes and edges needs to be adjusted for
 # savefiles smaller than about 620 bytes.
 function graph(n)
@@ -119,7 +119,9 @@ function print_markdown_table(results, mode)
     mode_string = Dict(:in_memory => "In Memory", :streaming => "Streaming")[mode]
     data_types = [:incompressible, :huffman, :runlength, :graph]
     # TODO: Find a proper way to retrieve the version number from Pkg.
-    version = Pkg.API.Context().env.manifest["Inflate"][1]["version"]
+    deps = Pkg.API.Context().env.manifest.deps
+    version = only(filter(x -> x.name == "Inflate",
+                          collect(values(deps)))).version
     print_markdown_row(vcat(version, mode_string, fill("", 4)))
     print_markdown_row(fill("-", 6))
     print_markdown_row(vcat("", "", string.(data_types)))
