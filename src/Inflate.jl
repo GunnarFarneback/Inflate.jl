@@ -761,9 +761,10 @@ function write_to_buffer(data::StreamingInflateData, x::UInt8)
 end
 
 function write_to_buffer(data::StreamingInflateData, x::AbstractVector{UInt8})
-    n = length(x)
-    copyto!(data.output_buffer, data.write_pos, x, 1, n)
-    data.write_pos += n
+    for i in eachindex(x)
+        data.output_buffer[data.write_pos + i - 1] = x[i]
+    end
+    data.write_pos += length(x)
     if data.write_pos > buffer_size
         data.write_pos -= buffer_size
     end
@@ -829,9 +830,6 @@ function getbyte(stream::AbstractInflateStream)
             if pos <= 0
                 n = min(n, 1 - pos)
                 pos += buffer_size
-            else
-                # Needed to avoid aliased `copyto!`.
-                n = min(n, stream.data.distance)
             end
             stream.data.pending_bytes -= n
             write_to_buffer(stream, @view stream.data.output_buffer[pos:(pos + n - 1)])
