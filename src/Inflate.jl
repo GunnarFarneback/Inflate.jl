@@ -508,7 +508,7 @@ function inflate_gzip(source::Vector{UInt8}; headers = nothing,
         error("corrupted data, crc check failed")
     end
     isize = getbits(data, 32)
-    if isize != length(out)
+    if isize != length(out) % UInt32
         error("corrupted data, length check failed")
     end
 
@@ -694,7 +694,7 @@ function read_trailer(stream::InflateGzipStream)
         error("corrupted data, crc check failed")
     end
     isize = getbits(stream.data, 32)
-    if isize != stream.num_bytes
+    if isize != stream.num_bytes % UInt32
         error("corrupted data, length check failed")
     end
 end

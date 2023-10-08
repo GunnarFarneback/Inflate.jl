@@ -4,6 +4,8 @@ using Inflate
 using CodecZlib: GzipCompressorStream, ZlibCompressorStream,
                  DeflateCompressorStream, CodecZlib
 
+include("utils.jl")
+
 empty_string = ""
 short_string = "This is a short string."
 medium_string = read(pathof(Inflate), String)
@@ -78,6 +80,19 @@ end
     s = "one line of text\n"
     @test readline(InflateGzipStream(GzipCompressorStream(IOBuffer(s))),
                    keep = true) == s
+end
+
+# Test gzip decompression of very large data (>2^32 zeros),
+# specifically to stress test the length check.
+#
+# Note: These tests are disabled unless you manually change to `if
+# true`. Since they inflate to 4 GB each they take some time to run
+# but more importantly they would put undue memory strain on CI.
+@testset "large gzip" begin
+    if false
+        @test all(==(0), inflate_gzip(all_zeros_gzip(2^32 + 1)))
+        @test all(==(0), read(InflateGzipStream(IOBuffer(all_zeros_gzip(2^32 + 1)))))
+    end
 end
 
 # Test failure cases, mostly corrupt data.
