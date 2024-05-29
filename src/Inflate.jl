@@ -468,7 +468,7 @@ function inflate_zlib(source::Vector{UInt8}; ignore_checksum = false)
     skip_bits_to_byte_boundary(data)
     stored_adler = 0
     for i = [24, 16, 8, 0]
-        stored_adler |= Int(get_aligned_byte(data)) << i
+        stored_adler |= UInt(get_aligned_byte(data)) << i
     end
     if !ignore_checksum && compute_adler_checksum(out) != stored_adler
         error("corrupted data, adler checksum error")
@@ -503,11 +503,11 @@ function inflate_gzip(source::Vector{UInt8}; headers = nothing,
     out = _inflate(data)
 
     skip_bits_to_byte_boundary(data)
-    crc32 = getbits(data, 32)
+    crc32 = getbits(data, 32) % UInt32
     if !ignore_checksum && crc32 != crc(out)
         error("corrupted data, crc check failed")
     end
-    isize = getbits(data, 32)
+    isize = getbits(data, 32) % UInt32
     if isize != length(out) % UInt32
         error("corrupted data, length check failed")
     end
@@ -679,7 +679,7 @@ function read_trailer(stream::InflateZlibStream)
     skip_bits_to_byte_boundary(stream.data)
     stored_adler = 0
     for i = [24, 16, 8, 0]
-        stored_adler |= Int(get_aligned_byte(stream.data)) << i
+        stored_adler |= UInt(get_aligned_byte(stream.data)) << i
     end
     if stream.compute_adler && computed_adler != stored_adler
         error("corrupted data, adler checksum error")
@@ -689,11 +689,11 @@ end
 function read_trailer(stream::InflateGzipStream)
     crc = finish_crc(stream.crc)
     skip_bits_to_byte_boundary(stream.data)
-    crc32 = getbits(stream.data, 32)
+    crc32 = getbits(stream.data, 32) % UInt32
     if stream.compute_crc && crc32 != crc
         error("corrupted data, crc check failed")
     end
-    isize = getbits(stream.data, 32)
+    isize = getbits(stream.data, 32) % UInt32
     if isize != stream.num_bytes % UInt32
         error("corrupted data, length check failed")
     end
