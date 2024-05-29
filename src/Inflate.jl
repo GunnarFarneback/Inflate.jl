@@ -893,7 +893,7 @@ end
 """
 function getbyte(stream::AbstractInflateStream)
     if stream.data.write_pos != stream.data.read_pos
-        return nothing
+        return
     end
 
     if stream.data.pending_bytes > 0
@@ -917,12 +917,12 @@ function getbyte(stream::AbstractInflateStream)
             stream.data.pending_bytes -= n
             write_to_buffer(stream, @view stream.data.output_buffer[pos:(pos + n - 1)])
         end
-        return nothing
+        return
     end
 
     if stream.data.waiting_for_new_block
         if stream.data.reading_final_block
-            return nothing
+            return
         end
         stream.data.reading_final_block = getbit(stream.data)
         compression_mode = getbits(stream.data, 2) % UInt8
@@ -936,7 +936,7 @@ function getbyte(stream::AbstractInflateStream)
             stream.data.distance = -1
             stream.data.pending_bytes = len
             getbyte(stream)
-            return nothing
+            return
         elseif compression_mode === 0x1
             stream.data.literal_or_length_code = fixed_literal_or_length_table
             stream.data.distance_code = fixed_distance_table
@@ -959,7 +959,7 @@ function getbyte(stream::AbstractInflateStream)
         stream.data.distance = getdist(stream.data)
         getbyte(stream)
     end
-    return nothing
+    return
 end
 
 function Base.eof(stream::AbstractInflateStream)
