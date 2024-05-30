@@ -222,7 +222,15 @@ function read_code_tables(data::AbstractInflateData)
 end
 
 function _inflate(data::InflateData)
-    out = UInt8[]
+    # TODO: In most use cases, the original (or inflated) size is known (e.g., ISIZE).
+    # A way to pass that size on is needed.
+    buf = Vector{UInt8}(undef, max(0x8000, (length(data.bytes) - data.bytepos) * 2))
+    out = IOBuffer(buf; read=true, write=true, truncate=true)
+    _inflate(out, data)
+    return take!(out)
+end
+
+function _inflate(out::IO, data::InflateData)
     final_block = false
     while !final_block
         final_block = getbits(data, 1) == 1
@@ -234,7 +242,7 @@ function _inflate(data::InflateData)
             if len ⊻ nlen != 0xffff
                 error("corrupted data")
             end
-            append!(out, get_input_bytes(data, len))
+            write(out, get_input_bytes(data, len))
             continue
         elseif compression_mode == 1
             data.literal_or_length_code = fixed_literal_or_length_table
@@ -248,24 +256,31 @@ function _inflate(data::InflateData)
         while true
             v = get_literal_or_length(data)
             if v < 256
-                push!(out, UInt8(v))
+                write(out, v % UInt8)
+                continue
             elseif v == 256
                 break
-            else
-                length = getlength(data, v)
-                distance = getdist(data)
-                if length <= distance
-                    append!(out, @view out[(end - distance + 1):(end - distance + length)])
-                else
-                    for i = 1:length
-                        push!(out, out[end - distance + 1])
-                    end
-                end
+            end
+            length = getlength(data, v)
+            distance = getdist(data)
+            while length >= 4 && length <= distance
+                skip(out, -distance)
+                b = read(out, UInt32)
+                skip(out, distance - 4)
+                write(out, b)
+                length -= 4
+            end
+            while length > 0
+                skip(out, -distance)
+                b = read(out, UInt8)
+                skip(out, distance - 1)
+                write(out, b)
+                length -= 1
             end
         end
     end
 
-    return out
+    return
 end
 
 function init_adler()
