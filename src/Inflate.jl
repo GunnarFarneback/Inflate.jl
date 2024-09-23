@@ -77,7 +77,7 @@ mutable struct InflateData <: AbstractInflateData
 end
 
 function InflateData(source::Vector{UInt8})
-    InflateData(source, 0, 1, 0, fixed_literal_or_length_table,
+    InflateData(source, 0, 1, 8, fixed_literal_or_length_table,
                 fixed_distance_table, false, init_crc())
 end
 
@@ -99,29 +99,45 @@ function get_input_bytes(data::InflateData, n::Int)
 end
 
 function getbit(data::AbstractInflateData)
-    if data.bitpos == 0
+    data.bitpos += 1
+    if data.bitpos == 9
+        data.bitpos = 1
         data.current_byte = Int(get_input_byte(data))
     end
     b = data.current_byte & 1
-    data.bitpos += 1
-    if data.bitpos == 8
-        data.bitpos = 0
-    else
-        data.current_byte >>= 1
-    end
+    data.current_byte >>= 1
     return b
 end
 
 function getbits(data::AbstractInflateData, n::Int)
-    b = 0
-    for i = 0:(n-1)
-        b |= getbit(data) << i
+    bitpos = data.bitpos
+    if bitpos == 0
+        data.current_byte = Int(get_input_byte(data))
+    end
+    bits_left = 8 - bitpos
+
+    if n <= bits_left
+        b = Int(data.current_byte & ((1 << n) - 1))
+        data.current_byte >>= n
+        data.bitpos = bitpos + n
+    else
+        b = Int(data.current_byte) # but we still need more bits...
+        i = bits_left
+        while i < n-8
+            data.current_byte = Int(get_input_byte(data))
+            b |= data.current_byte << i
+            i += 8
+        end
+        current_byte = Int(get_input_byte(data))
+        b |= (current_byte & ((1 << (n - i)) - 1)) << i
+        data.current_byte = current_byte >> (n - i)
+        data.bitpos = n - i
     end
     return b
 end
 
 function skip_bits_to_byte_boundary(data::AbstractInflateData)
-    data.bitpos = 0
+    data.bitpos = 8
     return
 end
 
