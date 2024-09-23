@@ -3,7 +3,7 @@ Pkg.activate(@__DIR__)
 Pkg.instantiate()
 
 using Inflate
-using BenchmarkTools
+using Chairmarks
 using CodecZlib
 using Graphs
 using StatsBase
@@ -77,17 +77,17 @@ function run_tests()
                 zlib_decompressor = zlib_decompressors[format]
                 inflate_decompressor = inflate_decompressors[format]
                 GC.gc()
-                t1 = @belapsed transcode($zlib_decompressor, $compressed)
+                t1 = (@b transcode(zlib_decompressor, compressed)).time
                 GC.gc()
-                t2 = @belapsed $inflate_decompressor($compressed)
+                t2 = (@b inflate_decompressor(compressed)).time
                 results[(data_size, data_type, format, :zlib, :in_memory)] = t1
                 results[(data_size, data_type, format, :inflate, :in_memory)] = t2
                 zlib_decompressor_stream = zlib_decompressor_streams[format]
                 inflate_decompressor_stream = inflate_decompressor_streams[format]
                 GC.gc()
-                t3 = @belapsed read($zlib_decompressor_stream(stream)) setup=(stream = IOBuffer($compressed)) evals=1
+                t3 = (@b IOBuffer(compressed) read(zlib_decompressor_stream(_)) evals=1).time
                 GC.gc()
-                t4 = @belapsed read($inflate_decompressor_stream(stream)) setup=(stream = IOBuffer($compressed)) evals=1
+                t4 = (@b IOBuffer(compressed) read(inflate_decompressor_stream(_)) evals=1).time
                 results[(data_size, data_type, format, :zlib, :streaming)] = t3
                 results[(data_size, data_type, format, :inflate, :streaming)] = t4
             end
