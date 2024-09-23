@@ -134,12 +134,12 @@ end
 function get_value_from_code(data::AbstractInflateData,
                              code::Vector{Vector{Int}})
     v = 0
-    for i = 1:length(code)
+    for c in code
         v = (v << 1) | getbit(data)
-        if v < length(code[i])
-            return code[i][1 + v]
+        if v < length(c)
+            return c[1 + v]
         end
-        v -= length(code[i])
+        v -= length(c)
     end
     error("incomplete code table")
 end
