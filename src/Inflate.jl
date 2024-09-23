@@ -255,7 +255,9 @@ function _inflate(data::InflateData)
                 length = getlength(data, v)
                 distance = getdist(data)
                 if length <= distance
-                    append!(out, @view out[(end - distance + 1):(end - distance + length)])
+                    ln = Base.length(out)
+                    resize!(out, ln+length)
+                    copyto!(out, ln+1, out, ln-distance+1, length)
                 else
                     for i = 1:length
                         push!(out, out[end - distance + 1])
