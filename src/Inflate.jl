@@ -172,13 +172,10 @@ function getdist(data::AbstractInflateData)
 end
 
 function transform_code_lengths_to_code(code_lengths::Vector{Int})
-    code = Vector{Int}[]
+    code = [Int[] for _ in 1:maximum(code_lengths)]
     for i = 1:length(code_lengths)
         n = code_lengths[i]
         if n > 0
-            while n > length(code)
-                push!(code, Int[])
-            end
             push!(code[n], i - 1)
         end
     end
